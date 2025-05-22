@@ -11,6 +11,7 @@ import subprocess # For OS-level TTS
 import platform   # To detect OS
 import shlex      # For quoting command arguments safely
 from vosk import Model, KaldiRecognizer, SetLogLevel # Import SetLogLevel
+import csv
 
 # --- Set Vosk Log Level ---
 # Set before initializing any Vosk objects to reduce startup verbosity
@@ -58,8 +59,6 @@ S_METER_DBFS_MAP = {
     -44: "S9+18dB", -38: "S9+24dB", -32: "S9+30dB", -26: "S9+36dB", -20: "S9+40dB"
 }
 
-#VOSK_VOCABULARY = list(NATO_PHONETIC_ALPHABET.keys()) + [str(i) for i in range(10)] + ["signal", "report"]
-#VOSK_GRAMMAR_STR = json.dumps(list(set(VOSK_VOCABULARY)))
 
 VOSK_VOCABULARY = []
 if STT_ENGINE == "vosk":
@@ -234,6 +233,17 @@ def validate_callsign_format(callsign_text):
     if not callsign_text: return False
     return bool(re.match(CALLSIGN_REGEX, callsign_text.upper()))
 
+def log_signal_report(callsign, s_meter, snr, recognized_text, timestamp=None, csv_path="signal_reports.csv"):
+    if timestamp is None:
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    row = [timestamp, callsign, s_meter, snr, recognized_text]
+    file_exists = os.path.isfile(csv_path)
+    with open(csv_path, mode='a', newline='', encoding='utf-8') as csvfile:
+        writer = csv.writer(csvfile)
+        if not file_exists:
+            writer.writerow(["timestamp", "callsign", "s_meter", "snr_db", "recognized_text"])
+        writer.writerow(row)
+
 def process_stt_result(text_input, iq_data_for_snr_list):
     text_lower = text_input.lower(); print(f"STT recognized: '{text_input}'")
     if text_lower.endswith(TRIGGER_PHRASE_END):
@@ -254,6 +264,7 @@ def process_stt_result(text_input, iq_data_for_snr_list):
                     else:
                         process_stt_result.last_call_info = {'callsign': actual_callsign_text, 'time': current_time}
                         s_meter, snr = calculate_signal_metrics(iq_data_for_snr_list)
+                        log_signal_report(actual_callsign_text, s_meter, snr, text_input)
                         response_text = f"{actual_callsign_text}, Your signal is {s_meter} with an SNR of {snr:.1f} dB."
                         print(f"Response: {response_text}")
                         speak_and_transmit(response_text)
