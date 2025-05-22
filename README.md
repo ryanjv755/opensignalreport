@@ -1,6 +1,6 @@
 # SDR RF Signal Reporter
 
-This Python script listens to a specified radio frequency using an RTL-SDR dongle, detects voice activity, transcribes spoken amateur radio callsigns (using NATO phonetic alphabet) followed by the trigger phrase "signal report", and responds with an S-meter reading and estimated SNR.
+This Python script listens to a specified radio frequency using an RTL-SDR dongle, detects voice activity, transcribes spoken amateur radio callsigns (using NATO phonetic alphabet) followed by the trigger phrase "signal report", and responds with an S-meter reading and estimated SNR. The audio response can be automatically transmitted back via a connected handheld radio using a PTT-capable cable.
 
 ## Features
 
@@ -14,9 +14,10 @@ This Python script listens to a specified radio frequency using an RTL-SDR dongl
 * **Signal Strength Reporting**:
     * Estimates S-meter reading based on received signal power (dBFS).
     * Provides a basic SNR estimation.
-* **Text-to-Speech (TTS) Response**:
+* **Text-to-Speech (TTS) Response with Radio Transmission**:
     * Verbally announces the signal report back to the recognized callsign.
     * Uses OS-native TTS engines for cross-platform compatibility (Windows, macOS, Linux).
+    * **Designed for automatic transmission**: The audio output is intended to be routed to a handheld radio via a cable like the [BaofengTech APRS-K1 Pro](https://baofengtech.com/product/aprs-k1-pro), which handles automatic PTT (Push-To-Talk).
 * **Configurable Parameters**: Easily adjust SDR settings, VAD thresholds, audio rates, and STT model path.
 * **Console Output**: Provides detailed logging of its operations.
 * **Graceful Shutdown**: Allows exiting the application by typing 'exit' in the console or via Ctrl+C.
@@ -40,17 +41,22 @@ This Python script listens to a specified radio frequency using an RTL-SDR dongl
     * The script checks if the transcribed text ends with "signal report".
     * It extracts the preceding words, attempts to convert them from NATO phonetic alphabet to a callsign.
     * The callsign is validated against a regex.
-7.  **Signal Metrics & Response**:
+7.  **Signal Metrics & Response Generation**:
     * If a valid callsign and trigger phrase are found, it calculates the S-meter reading and a nominal SNR from the captured IQ samples.
     * It constructs a response string (e.g., "AB1CD, Your signal is S9 plus 10 dB with an SNR of 15.0 dB.").
-    * The `speak_and_transmit` function uses the operating system's built-in TTS capabilities (PowerShell for Windows, `say` for macOS, `spd-say` or `espeak` for Linux) to announce the report.
+8.  **Text-to-Speech and Transmission**:
+    * The `speak_and_transmit` function uses the operating system's built-in TTS capabilities to generate the audio for the response.
+    * This audio output is then sent through the computer's audio out, intended to be connected to a handheld radio via a PTT-activating cable (like the APRS-K1 Pro). The cable triggers the radio's PTT, and the audio is transmitted on the radio's programmed frequency.
     * A cooldown mechanism prevents responding to the same callsign repeatedly within a short time (10 seconds).
-8.  **Loop**: The process repeats from step 3.
+9.  **Loop**: The process repeats from step 3.
 
 ## Requirements
 
 * **Python 3.x**
 * **RTL-SDR Dongle** and associated drivers (librtlsdr).
+* **Handheld Radio** (e.g., Baofeng or similar) with a K1-type accessory jack if using the APRS-K1 Pro cable.
+* **APRS-K1 Pro Cable (or similar VOX/PTT-activating cable)**:
+    * Such as the [BaofengTech APRS-K1 Pro](https://baofengtech.com/product/aprs-k1-pro). This cable connects the computer's audio output/input to the radio's speaker/mic port and is designed to key the radio's PTT automatically when audio is sent from the computer.
 * **Python Libraries**:
     * `rtlsdr` (pyrtlsdr)
     * `numpy`
@@ -79,11 +85,30 @@ This Python script listens to a specified radio frequency using an RTL-SDR dongl
     * Update `VOSK_MODEL_PATH` to the path of your extracted Vosk model folder (e.g., `VOSK_MODEL_PATH = "path/to/your/vosk-model-small-en-us-0.15"`).
     * Adjust other parameters in the "Configuration" section of the script as needed (see below).
 
+## Hardware Setup for Transmission
+
+1.  **Connect the RTL-SDR dongle** to your computer. This will be used for *receiving* signals.
+2.  **Connect the APRS-K1 Pro cable** (or similar PTT-activating interface cable):
+    * Plug the appropriate connectors into your computer's audio output (speaker/headphone jack) and potentially an audio input (mic jack, though this script primarily uses it for PTT via audio signaling inherent to such cables or VOX on the radio if the cable only routes audio).
+    * Connect the K1 connector to your handheld radio.
+3.  **Configure your Handheld Radio**:
+    * Set the radio to the desired *transmit* frequency. This should be different from the SDR listening frequency. For example, you might listen on a repeater output and transmit on its input, or use a simplex frequency for reception and a different simplex frequency for transmission if you are acting as a cross-band responder.
+    * Ensure the radio's volume and VOX settings (if applicable and relied upon by your cable/setup) are appropriately adjusted for clear transmission triggered by the computer's audio. The APRS-K1 Pro is designed to handle PTT, but levels are still important.
+4.  **Computer Audio Settings**:
+    * Ensure the default audio output of your computer is routed to the jack where the APRS-K1 Pro cable is connected.
+    * Adjust the output volume from your computer to an appropriate level for the radio input – not too quiet, not too loud to cause distortion. Test this carefully.
+
+**Important Considerations for Transmission:**
+* **Licensing:** Ensure you have the appropriate amateur radio license to transmit on the frequencies you configure.
+* **Regulations:** Always operate in accordance_with local and national radio regulations.
+* **Frequency Coordination:** Be mindful of band plans and avoid interfering with other users or services. Using a simplex repeater setup or designated frequencies for automated systems is recommended.
+* **Testing:** Test your setup at low power first and get feedback on your audio quality and signal.
+
 ## Configuration
 
 Key parameters at the top of the script:
 
-* `SDR_CENTER_FREQ`: The frequency (in Hz) the SDR should tune to (e.g., `145.570e6` for 145.570 MHz).
+* `SDR_CENTER_FREQ`: The frequency (in Hz) the SDR should tune to for *listening* (e.g., `145.570e6` for 145.570 MHz).
 * `SDR_SAMPLE_RATE`: Sample rate for the SDR (e.g., `1.024e6`).
 * `SDR_GAIN`: SDR gain in dB (e.g., `6`). Use 'auto' for automatic gain control if supported by your SDR and library version, otherwise set a specific numeric value.
 * `SDR_NUM_SAMPLES_PER_CHUNK`: Number of samples to process at a time.
@@ -102,20 +127,21 @@ Key parameters at the top of the script:
 
 ## Usage
 
-1.  Ensure your RTL-SDR dongle is connected.
-2.  Make sure you have installed all requirements and configured the `VOSK_MODEL_PATH`.
-3.  Run the script from your terminal:
+1.  Complete the **Hardware Setup for Transmission** as described above.
+2.  Ensure your RTL-SDR dongle is connected.
+3.  Make sure you have installed all requirements and configured the `VOSK_MODEL_PATH`.
+4.  Run the script from your terminal:
     ```bash
     python your_script_name.py
     ```
-4.  The script will start, initialize the SDR, and perform RF baselining.
-5.  It will then print "Listening on [frequency] MHz for 'signal report'..."
-6.  When someone transmits their callsign using NATO phonetic alphabet followed by "signal report" on the tuned frequency (e.g., "Kilo One Alfa Bravo Charlie signal report"), the script will:
+5.  The script will start, initialize the SDR, and perform RF baselining.
+6.  It will then print "Listening on [frequency] MHz for 'signal report'..."
+7.  When someone transmits their callsign using NATO phonetic alphabet followed by "signal report" on the tuned frequency (e.g., "Kilo One Alfa Bravo Charlie signal report"), the script will:
     * Detect the transmission.
     * Attempt to transcribe it.
     * If successful, validate the callsign.
-    * Announce a signal report using TTS (e.g., "K1ABC, Your signal is S9 with an SNR of 15.0 dB.").
-7.  To stop the script, type `exit` in the console where it's running and press Enter, or press `Ctrl+C`.
+    * Announce a signal report using TTS. This audio will be routed through the connected cable, keying the radio to transmit the response on its configured frequency. (e.g., "K1ABC, Your signal is S9 with an SNR of 15.0 dB.").
+8.  To stop the script, type `exit` in the console where it's running and press Enter, or press `Ctrl+C`.
 
 ## Troubleshooting
 
@@ -129,6 +155,12 @@ Key parameters at the top of the script:
     * **Linux**: Ensure `spd-say` (from `speech-dispatcher`) or `espeak` is installed. The script tries `spd-say` first.
     * **Windows/macOS**: TTS should generally work out-of-the-box. Check system audio settings if no sound is produced.
     * Review console logs for specific error messages from the TTS subprocess.
+* **No Transmission / Radio Not Keying**:
+    * Verify the APRS-K1 Pro cable (or similar) is securely connected to both the computer's audio output and the radio.
+    * Ensure the correct audio output device is selected in your computer's sound settings and that the volume is up.
+    * Check the radio's PTT mechanism; if it relies on VOX and your cable is only audio, ensure VOX is enabled and sensitive enough on the radio. The APRS-K1 Pro is generally designed to handle PTT directly.
+    * Confirm the radio is powered on and on the correct transmit frequency.
+    * Test the cable and radio PTT function independently if possible (e.g., by playing a sound from the computer and seeing if it keys the radio).
 * **Poor recognition accuracy**:
     * Ensure a quiet RF environment or adjust `RF_VAD_STD_MULTIPLIER`.
     * Try a larger, more accurate Vosk model (though this will require more resources).
