@@ -17,12 +17,11 @@ from vosk import Model, KaldiRecognizer, SetLogLevel # Import SetLogLevel
 # Level 0 is default (verbose), 1 is warnings/errors, -1 is suppress all
 SetLogLevel(1) # Only show warnings and errors from Vosk
 
-# --- 1. Configuration ---
+# --- Configuration ---
 SDR_CENTER_FREQ = 145.570e6
 SDR_SAMPLE_RATE = 1.024e6
 SDR_GAIN = 6
 SDR_NUM_SAMPLES_PER_CHUNK = 16384
-RF_OFFSET = 0 # Offset tuning disabled
 
 NFM_FILTER_CUTOFF = 4000
 AUDIO_DOWNSAMPLE_RATE = 16000
