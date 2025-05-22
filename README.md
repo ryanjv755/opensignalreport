@@ -1,6 +1,6 @@
 # SDR RF Signal Reporter
 
-This Python script listens to a specified radio frequency using an RTL-SDR dongle, detects voice activity, transcribes spoken amateur radio callsigns (using NATO phonetic alphabet) followed by the trigger phrase "signal report", and responds with an S-meter reading and estimated SNR. The audio response can be automatically transmitted back via a connected handheld radio using a PTT-capable cable.
+This Python script listens to a specified radio frequency using an RTL-SDR dongle, detects voice activity, listens for a callsign (using NATO phonetic alphabet) followed by the trigger phrase "signal report", and responds with an S-meter reading and estimated SNR. The audio response will be played through the sound card, but can be automatically transmitted back via a connected handheld radio using a PTT-capable cable.
 
 ## Features
 
@@ -20,7 +20,6 @@ This Python script listens to a specified radio frequency using an RTL-SDR dongl
     * **Designed for automatic transmission**: The audio output is intended to be routed to a handheld radio via a cable like the [BaofengTech APRS-K1 Pro](https://baofengtech.com/product/aprs-k1-pro), which handles automatic PTT (Push-To-Talk).
 * **Configurable Parameters**: Easily adjust SDR settings, VAD thresholds, audio rates, and STT model path.
 * **Console Output**: Provides detailed logging of its operations.
-* **Graceful Shutdown**: Allows exiting the application by typing 'exit' in the console or via Ctrl+C.
 
 ## How It Works
 
