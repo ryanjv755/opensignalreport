@@ -11,6 +11,15 @@ import json
 import subprocess # For OS-level TTS
 import platform   # To detect OS
 import shlex      # For quoting command arguments safely
+from vosk import Model, KaldiRecognizer, SetLogLevel # Import SetLogLevel
+
+
+# --- Set Vosk Log Level ---
+# Set before initializing any Vosk objects to reduce startup verbosity
+# Level 0 is default (verbose), 1 is warnings/errors, -1 is suppress all
+SetLogLevel(1) # Only show warnings and errors from Vosk
+
+
 
 # --- 1. Configuration ---
 SDR_CENTER_FREQ = 145.570e6
@@ -22,7 +31,7 @@ RF_OFFSET = 0 # Offset tuning disabled
 NFM_FILTER_CUTOFF = 4000
 AUDIO_DOWNSAMPLE_RATE = 16000
 STT_ENGINE = "vosk"
-VOSK_MODEL_PATH = "vosk-model-small-en-us-0.15"
+VOSK_MODEL_PATH = "vosk-model-en-us-0.22-lgraph"
 BASELINE_DURATION_SECONDS = 3
 RF_VAD_STD_MULTIPLIER = 3.5
 VAD_SPEECH_CAPTURE_SECONDS = 10.0
@@ -40,7 +49,7 @@ dynamic_rf_vad_trigger_threshold = 0.0
 TRIGGER_PHRASE_END = "signal report"
 NATO_PHONETIC_ALPHABET = {
     'alfa': 'a', 'bravo': 'b', 'charlie': 'c', 'delta': 'd', 'echo': 'e',
-    'foxtrot': 'f', 'golf': 'g', 'hotel': 'h', 'india': 'i', 'juliett': 'j',
+    'foxtrot': 'f', 'golf': 'g', 'hotel': 'h', 'india': 'i', 'juliet': 'j',
     'kilo': 'k', 'lima': 'l', 'mike': 'm', 'november': 'n', 'oscar': 'o',
     'papa': 'p', 'quebec': 'q', 'romeo': 'r', 'sierra': 's', 'tango': 't',
     'uniform': 'u', 'victor': 'v', 'whiskey': 'w', 'x-ray': 'x', 'yankee': 'y',
@@ -54,8 +63,21 @@ S_METER_DBFS_MAP = {
     -44: "S9+18dB", -38: "S9+24dB", -32: "S9+30dB", -26: "S9+36dB", -20: "S9+40dB"
 }
 
-VOSK_VOCABULARY = list(NATO_PHONETIC_ALPHABET.keys()) + [str(i) for i in range(10)] + ["signal", "report"]
-VOSK_GRAMMAR_STR = json.dumps(list(set(VOSK_VOCABULARY)))
+#VOSK_VOCABULARY = list(NATO_PHONETIC_ALPHABET.keys()) + [str(i) for i in range(10)] + ["signal", "report"]
+#VOSK_GRAMMAR_STR = json.dumps(list(set(VOSK_VOCABULARY)))
+
+VOSK_VOCABULARY = []
+if STT_ENGINE == "vosk":
+
+    # Add all NATO phonetic words (which includes words for numbers like "zero", "one", "four")
+    VOSK_VOCABULARY.extend(list(NATO_PHONETIC_ALPHABET.keys()))
+    # Add command words
+    VOSK_VOCABULARY.extend(["signal", "report"])
+
+    VOSK_GRAMMAR_STR = json.dumps(list(set(VOSK_VOCABULARY)))
+else:
+    VOSK_GRAMMAR_STR = None
+
 
 audio_iq_data_queue = queue.Queue()
 
