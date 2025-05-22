@@ -1,0 +1,144 @@
+# SDR RF Signal Reporter
+
+This Python script listens to a specified radio frequency using an RTL-SDR dongle, detects voice activity, transcribes spoken amateur radio callsigns (using NATO phonetic alphabet) followed by the trigger phrase "signal report", and responds with an S-meter reading and estimated SNR.
+
+## Features
+
+* **Real-time RF Processing**: Captures and demodulates NFM (Narrowband FM) signals from an RTL-SDR.
+* **RF-Based Voice Activity Detection (VAD)**: Dynamically establishes a noise baseline and triggers audio recording when significant RF power is detected.
+* **Speech-to-Text (STT)**: Utilizes the Vosk offline speech recognition toolkit to convert spoken audio to text.
+    * **Custom Grammar**: Primarily listens for NATO phonetic alphabet words, numbers, and the phrase "signal report" for improved accuracy.
+* **Callsign Recognition**:
+    * Converts recognized NATO phonetic alphabet words (e.g., "Alfa Bravo One Two Charlie Delta") into a standard callsign format (e.g., "AB12CD").
+    * Validates the recognized callsign against a common amateur radio callsign regex.
+* **Signal Strength Reporting**:
+    * Estimates S-meter reading based on received signal power (dBFS).
+    * Provides a basic SNR estimation.
+* **Text-to-Speech (TTS) Response**:
+    * Verbally announces the signal report back to the recognized callsign.
+    * Uses OS-native TTS engines for cross-platform compatibility (Windows, macOS, Linux).
+* **Configurable Parameters**: Easily adjust SDR settings, VAD thresholds, audio rates, and STT model path.
+* **Console Output**: Provides detailed logging of its operations.
+* **Graceful Shutdown**: Allows exiting the application by typing 'exit' in the console or via Ctrl+C.
+
+## How It Works
+
+1.  **SDR Initialization**: Connects to an RTL-SDR dongle and tunes to the configured `SDR_CENTER_FREQ`.
+2.  **RF Baselining**: For the first few seconds (`BASELINE_DURATION_SECONDS`), the script listens to establish an average RF noise floor. This is used to set a dynamic threshold for the RF-based Voice Activity Detection (VAD).
+3.  **RF Monitoring & Demodulation**:
+    * Continuously reads IQ samples from the SDR.
+    * Demodulates the NFM signal.
+    * Filters and downsamples the audio to `AUDIO_DOWNSAMPLE_RATE`.
+4.  **Voice Activity Detection (VAD)**:
+    * Monitors the RF power of incoming chunks.
+    * If the power exceeds the `dynamic_rf_vad_trigger_threshold`, it starts capturing audio.
+    * Continues capturing until RF power drops below the threshold for a set duration (`RF_VAD_SILENCE_TO_END_SECONDS`) or max duration (`VAD_SPEECH_CAPTURE_SECONDS`) is reached.
+5.  **Speech-to-Text (STT)**:
+    * The captured audio buffer is passed to the Vosk KaldiRecognizer.
+    * Vosk transcribes the audio using the defined grammar (NATO alphabet, numbers, "signal report").
+6.  **Command Processing**:
+    * The script checks if the transcribed text ends with "signal report".
+    * It extracts the preceding words, attempts to convert them from NATO phonetic alphabet to a callsign.
+    * The callsign is validated against a regex.
+7.  **Signal Metrics & Response**:
+    * If a valid callsign and trigger phrase are found, it calculates the S-meter reading and a nominal SNR from the captured IQ samples.
+    * It constructs a response string (e.g., "AB1CD, Your signal is S9 plus 10 dB with an SNR of 15.0 dB.").
+    * The `speak_and_transmit` function uses the operating system's built-in TTS capabilities (PowerShell for Windows, `say` for macOS, `spd-say` or `espeak` for Linux) to announce the report.
+    * A cooldown mechanism prevents responding to the same callsign repeatedly within a short time (10 seconds).
+8.  **Loop**: The process repeats from step 3.
+
+## Requirements
+
+* **Python 3.x**
+* **RTL-SDR Dongle** and associated drivers (librtlsdr).
+* **Python Libraries**:
+    * `rtlsdr` (pyrtlsdr)
+    * `numpy`
+    * `scipy`
+    * `vosk`
+* **Vosk Speech Recognition Model**:
+    * A Vosk model compatible with the configured language (e.g., `vosk-model-small-en-us-0.15`). Download from [Vosk Models](https://alphacephei.com/vosk/models).
+* **Operating System Text-to-Speech (TTS) tools**:
+    * **Windows**: PowerShell (usually available by default).
+    * **macOS**: `say` command (available by default).
+    * **Linux**: `spd-say` (speech-dispatcher) or `espeak`. Install if not present (e.g., `sudo apt install speech-dispatcher espeak`).
+
+## Installation
+
+1.  **Clone the repository or download the script.**
+2.  **Install Python libraries**:
+    ```bash
+    pip install numpy scipy pyrtlsdr vosk
+    ```
+3.  **Download a Vosk Model**:
+    * Go to [https://alphacephei.com/vosk/models](https://alphacephei.com/vosk/models).
+    * Download a suitable model (e.g., `vosk-model-small-en-us-0.15`).
+    * Extract the model folder and place it in a known location.
+4.  **Configure the script**:
+    * Open the Python script in a text editor.
+    * Update `VOSK_MODEL_PATH` to the path of your extracted Vosk model folder (e.g., `VOSK_MODEL_PATH = "path/to/your/vosk-model-small-en-us-0.15"`).
+    * Adjust other parameters in the "Configuration" section of the script as needed (see below).
+
+## Configuration
+
+Key parameters at the top of the script:
+
+* `SDR_CENTER_FREQ`: The frequency (in Hz) the SDR should tune to (e.g., `145.570e6` for 145.570 MHz).
+* `SDR_SAMPLE_RATE`: Sample rate for the SDR (e.g., `1.024e6`).
+* `SDR_GAIN`: SDR gain in dB (e.g., `6`). Use 'auto' for automatic gain control if supported by your SDR and library version, otherwise set a specific numeric value.
+* `SDR_NUM_SAMPLES_PER_CHUNK`: Number of samples to process at a time.
+* `NFM_FILTER_CUTOFF`: Low-pass filter cutoff for NFM demodulation (e.g., `4000` Hz).
+* `AUDIO_DOWNSAMPLE_RATE`: Audio sample rate for STT processing (e.g., `16000` Hz). Must match what the Vosk model expects or be compatible.
+* `STT_ENGINE`: Currently set to "vosk".
+* `VOSK_MODEL_PATH`: **Crucial!** Path to the Vosk model directory.
+* `BASELINE_DURATION_SECONDS`: Duration (in seconds) for initial RF noise floor calibration.
+* `RF_VAD_STD_MULTIPLIER`: Multiplier for standard deviation above average noise to set the VAD threshold.
+* `VAD_SPEECH_CAPTURE_SECONDS`: Maximum duration for a single voice capture.
+* `VAD_MIN_SPEECH_SAMPLES`: Minimum audio length to be considered valid speech for STT.
+* `RF_VAD_SILENCE_TO_END_SECONDS`: Duration of RF silence to consider a transmission ended.
+* `TRIGGER_PHRASE_END`: The phrase that must follow the callsign (e.g., `"signal report"`).
+* `NATO_PHONETIC_ALPHABET`: Dictionary mapping phonetic words to characters.
+* `CALLSIGN_REGEX`: Regular expression for validating recognized callsigns.
+
+## Usage
+
+1.  Ensure your RTL-SDR dongle is connected.
+2.  Make sure you have installed all requirements and configured the `VOSK_MODEL_PATH`.
+3.  Run the script from your terminal:
+    ```bash
+    python your_script_name.py
+    ```
+4.  The script will start, initialize the SDR, and perform RF baselining.
+5.  It will then print "Listening on [frequency] MHz for 'signal report'..."
+6.  When someone transmits their callsign using NATO phonetic alphabet followed by "signal report" on the tuned frequency (e.g., "Kilo One Alfa Bravo Charlie signal report"), the script will:
+    * Detect the transmission.
+    * Attempt to transcribe it.
+    * If successful, validate the callsign.
+    * Announce a signal report using TTS (e.g., "K1ABC, Your signal is S9 with an SNR of 15.0 dB.").
+7.  To stop the script, type `exit` in the console where it's running and press Enter, or press `Ctrl+C`.
+
+## Troubleshooting
+
+* **"ERROR: Vosk model path not found"**: Ensure `VOSK_MODEL_PATH` in the script correctly points to your downloaded and extracted Vosk model folder.
+* **"ERROR: Vosk library not installed."**: Run `pip install vosk`.
+* **SDR not found / rtlsdr errors**:
+    * Ensure your RTL-SDR dongle is properly connected.
+    * Verify that the necessary drivers (e.g., Zadig on Windows for librtlsdr) are installed and working.
+    * On Linux, you might need to blacklist default kernel drivers (e.g., `dvb_usb_rtl28xxu`) by creating a file in `/etc/modprobe.d/`.
+* **No TTS output / TTS errors**:
+    * **Linux**: Ensure `spd-say` (from `speech-dispatcher`) or `espeak` is installed. The script tries `spd-say` first.
+    * **Windows/macOS**: TTS should generally work out-of-the-box. Check system audio settings if no sound is produced.
+    * Review console logs for specific error messages from the TTS subprocess.
+* **Poor recognition accuracy**:
+    * Ensure a quiet RF environment or adjust `RF_VAD_STD_MULTIPLIER`.
+    * Try a larger, more accurate Vosk model (though this will require more resources).
+    * Ensure the `AUDIO_DOWNSAMPLE_RATE` matches what the Vosk model is trained for.
+    * Speak clearly and relatively close to the microphone if testing with a local transmitter.
+* **"VAD: Triggered! Starting capture." but no STT result**:
+    * The audio might be too short (less than `VAD_MIN_SPEECH_SAMPLES`).
+    * The audio quality might be too poor for Vosk to recognize anything.
+    * The speech might not contain words from the defined `VOSK_VOCABULARY`/`VOSK_GRAMMAR_STR`.
+
+## License
+
+This project is open-source. Please feel free to modify and distribute. If no specific license is chosen, consider it under MIT or Apache 2.0, or specify your own. (Currently, no license file is provided with the script).
