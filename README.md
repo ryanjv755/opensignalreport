@@ -1,4 +1,4 @@
-# SDR RF Signal Reporter
+# SDR Signal Reporter
 
 This Python script listens to a specified radio frequency using an RTL-SDR dongle, detects voice activity, listens for a callsign (using NATO phonetic alphabet) followed by the trigger phrase "signal report", and responds with an S-meter reading and estimated SNR. The audio response will be played through the sound card, but can be automatically transmitted back via a connected handheld radio using a PTT-capable cable.
 
