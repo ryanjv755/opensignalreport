@@ -6,20 +6,16 @@ import re
 import numpy as np
 from scipy import signal as sig
 from rtlsdr import RtlSdr
-# import pyttsx3 # No longer using pyttsx3
 import json
 import subprocess # For OS-level TTS
 import platform   # To detect OS
 import shlex      # For quoting command arguments safely
 from vosk import Model, KaldiRecognizer, SetLogLevel # Import SetLogLevel
 
-
 # --- Set Vosk Log Level ---
 # Set before initializing any Vosk objects to reduce startup verbosity
 # Level 0 is default (verbose), 1 is warnings/errors, -1 is suppress all
 SetLogLevel(1) # Only show warnings and errors from Vosk
-
-
 
 # --- 1. Configuration ---
 SDR_CENTER_FREQ = 145.570e6
