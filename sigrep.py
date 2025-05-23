@@ -259,20 +259,20 @@ def validate_callsign_format(callsign_text):
     if not callsign_text: return False
     return bool(re.match(CALLSIGN_REGEX, callsign_text.upper()))
 
-def log_signal_report(callsign, s_meter, snr, recognized_text, timestamp=None, csv_path="signal_reports.csv", uid=None):
+def log_signal_report(callsign, s_meter, snr, recognized_text, duration_sec, vad_trigger_threshold, timestamp=None, csv_path="signal_reports.csv", uid=None):
     if timestamp is None:
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
     if uid is None:
         uid = uuid.uuid4().hex[:16]
-    row = [uid, timestamp, callsign, s_meter, snr, recognized_text]
+    row = [uid, timestamp, callsign, s_meter, snr, duration_sec, vad_trigger_threshold, recognized_text]
     file_exists = os.path.isfile(csv_path)
     with open(csv_path, mode='a', newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
         if not file_exists:
-            writer.writerow(['uid', 'timestamp', 'callsign', 's_meter', 'snr_db', 'recognized_text'])
+            writer.writerow(['uid', 'timestamp', 'callsign', 's_meter', 'snr_db', 'duration_sec', 'vad_trigger_threshold', 'recognized_text'])
         writer.writerow(row)
 
-def process_stt_result(text_input, iq_data_for_snr_list, uid=None):
+def process_stt_result(text_input, iq_data_for_snr_list, uid=None, vad_trigger_threshold=None):
     text_lower = text_input.lower(); print(f"STT recognized: '{text_input}'")
     if text_lower.endswith(TRIGGER_PHRASE_END):
         try:
@@ -292,7 +292,9 @@ def process_stt_result(text_input, iq_data_for_snr_list, uid=None):
                     else:
                         process_stt_result.last_call_info = {'callsign': actual_callsign_text, 'time': current_time}
                         s_meter, snr = calculate_signal_metrics(iq_data_for_snr_list)
-                        log_signal_report(actual_callsign_text, s_meter, snr, text_input, uid=uid)
+                        # Calculate duration_sec from last VAD buffer if available
+                        duration_sec = getattr(process_stt_result, 'last_vad_audio_len', 0) / AUDIO_DOWNSAMPLE_RATE
+                        log_signal_report(actual_callsign_text, s_meter, snr, text_input, duration_sec, vad_trigger_threshold, uid=uid)
                         response_text = f"{actual_callsign_text}, Your signal is {s_meter} with an SNR of {snr:.1f} dB."
                         print(f"Response: {response_text}")
                         speak_and_transmit(response_text)
@@ -401,8 +403,9 @@ def audio_processing_thread_func():
                             plt.close()
                             print(f"Saved spectrogram to {spec_path}")
                         if recognized_text_segment:
-                            # Pass capture_uid to process_stt_result or directly to log_signal_report
-                            process_stt_result(recognized_text_segment, list(vad_iq_buffer), uid=capture_uid)
+                            # Save VAD buffer length for duration calculation
+                            process_stt_result.last_vad_audio_len = len(vad_audio_buffer)
+                            process_stt_result(recognized_text_segment, list(vad_iq_buffer), uid=capture_uid, vad_trigger_threshold=dynamic_rf_vad_trigger_threshold)
                     vad_audio_buffer = np.array([], dtype=np.float32); vad_iq_buffer.clear()
                     is_capturing_speech_rf = False; rf_silence_chunk_counter = 0
                     if vosk_recognizer_instance: vosk_recognizer_instance.Reset()
