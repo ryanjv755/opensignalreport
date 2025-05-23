@@ -67,6 +67,16 @@ S_METER_DBFS_MAP = {
     -44: "S9+18dB", -38: "S9+24dB", -32: "S9+30dB", -26: "S9+36dB", -20: "S9+40dB"
 }
 
+HPF_CUTOFF_HZ = 150  # High-pass filter cutoff frequency in Hz
+HPF_ORDER = 4        # 4th order Butterworth
+
+# Calculate filter coefficients globally for efficiency
+HPF_SOS = sig.butter(
+    HPF_ORDER,
+    HPF_CUTOFF_HZ / (AUDIO_DOWNSAMPLE_RATE / 2),
+    btype='highpass',
+    output='sos'
+)
 
 VOSK_VOCABULARY = []
 if STT_ENGINE == "vosk":
@@ -358,9 +368,49 @@ def audio_processing_thread_func():
                 if process_this_rf_segment:
                     recognized_text_segment = None
                     if len(vad_audio_buffer) >= VAD_MIN_SPEECH_SAMPLES:
-                        audio_data_int16 = (vad_audio_buffer * 32767).astype(np.int16)
+                        print(f"Processing captured segment (RF VAD): {len(vad_audio_buffer)/AUDIO_DOWNSAMPLE_RATE:.2f}s audio (with {len(vad_iq_buffer)} IQ chunks).")
+
+                        # Set defaults for diagnostics
+                        callsign_for_plot = "Unknown"
+                        capture_uid = uuid.uuid4().hex[:16]
+
+                        # 1. Copy vad_audio_buffer to unfiltered_audio_segment
+                        unfiltered_audio_segment = np.copy(vad_audio_buffer)
+
+                        # 2. Optional: Save unfiltered_audio_segment to WAV (diagnostic)
+                        if not hasattr(audio_processing_thread_func, 'saved_vad_wav_count'):
+                            audio_processing_thread_func.saved_vad_wav_count = 0
+                        MAX_VAD_WAV_SAVES = 10  # Adjust as needed
+                        if audio_processing_thread_func.saved_vad_wav_count < MAX_VAD_WAV_SAVES:
+                            # debug_wav_filename = f"debug_unfiltered_vad_audio_{time.strftime('%Y%m%d_%H%M%S')}_{audio_processing_thread_func.saved_vad_wav_count}.wav"
+                            # debug_wav_path = os.path.join(VAD_WAV_OUTPUT_DIR, debug_wav_filename)
+                            # import soundfile as sf
+                            # sf.write(debug_wav_path, unfiltered_audio_segment, AUDIO_DOWNSAMPLE_RATE)
+                            # print(f"Saved unfiltered diagnostic WAV to {debug_wav_path}")
+                            audio_processing_thread_func.saved_vad_wav_count += 1
+
+                        # 3. If SAVE_SPECTROGRAM, generate and save spectrogram from unfiltered_audio_segment
+                        if SAVE_SPECTROGRAM:
+                            plot_time = time.strftime("%Y-%m-%d %H:%M:%S")
+                            plt.figure(figsize=(8, 4))
+                            plt.specgram(unfiltered_audio_segment, NFFT=256, Fs=AUDIO_DOWNSAMPLE_RATE, noverlap=128, cmap='viridis')
+                            plt.title(f"Callsign: {callsign_for_plot}  {plot_time}\nUID: {capture_uid} (unfiltered)")
+                            plt.xlabel("Time (s)")
+                            plt.ylabel("Frequency (Hz)")
+                            plt.colorbar(label="Intensity (dB)")
+                            spec_filename = f"unfiltered_{capture_uid}_{callsign_for_plot}.png"
+                            spec_path = os.path.join(VAD_WAV_OUTPUT_DIR, spec_filename)
+                            plt.savefig(spec_path, bbox_inches='tight')
+                            plt.close()
+                            print(f"Saved unfiltered spectrogram to {spec_path}")
+
+                        # 4. Apply high-pass filter to unfiltered_audio_segment to get filtered_audio_for_stt
+                        sos_highpass_filter = sig.butter(5, 150, btype='high', fs=AUDIO_DOWNSAMPLE_RATE, output='sos')
+                        filtered_audio_for_stt = sig.sosfilt(sos_highpass_filter, unfiltered_audio_segment)
+
+                        # 5. STT prep using the *filtered* audio:
+                        audio_data_int16 = (filtered_audio_for_stt * 32767).astype(np.int16)
                         os.makedirs(VAD_WAV_OUTPUT_DIR, exist_ok=True)
-                        capture_uid = uuid.uuid4().hex[:16]  # Generate UID ONCE here
                         wav_filename = f"vad_capture_{time.strftime('%Y%m%d_%H%M%S')}_{capture_uid}.wav"
                         wav_path = os.path.join(VAD_WAV_OUTPUT_DIR, wav_filename)
                         wavfile.write(wav_path, AUDIO_DOWNSAMPLE_RATE, audio_data_int16)
