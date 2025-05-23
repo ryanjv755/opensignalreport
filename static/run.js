@@ -4,11 +4,11 @@ document.addEventListener('DOMContentLoaded', function() {
       let s = data;
       let html = '';
       if (s.running) {
-        if (s.state === 'baselining') html += '<div class="msg" style="color:orange;font-weight:bold;">Radio is baselining... Please wait.</div>';
-        else if (s.state === 'ready') html += '<div class="msg" style="color:green;font-weight:bold;">Radio is running and ready.</div>';
-        else html += '<div class="msg" style="color:gray;">Radio is running (status unknown).</div>';
+        if (s.state === 'baselining') html += '<div class="msg" style="color:orange;font-weight:bold;">SignalReport is baselining... Please wait.</div>';
+        else if (s.state === 'ready') html += '<div class="msg" style="color:green;font-weight:bold;">SignalReport is running and ready.</div>';
+        else html += '<div class="msg" style="color:gray;">SignalReport is running (status unknown).</div>';
       } else {
-        html += '<div class="msg" style="color:red;">Radio is stopped.</div>';
+        html += '<div class="msg" style="color:red;">SignalReport is stopped.</div>';
       }
       if (s.error) html += '<div class="msg" style="color:red;">'+s.error+'</div>';
       document.getElementById('status-block').innerHTML = html;
