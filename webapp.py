@@ -183,18 +183,28 @@ def run_status():
                 action = 'start'
             elif 'stop' in request.form:
                 action = 'stop'
+            elif 'restart' in request.form:
+                action = 'restart'
             with open('sigrep_webapp_launch.log', 'a') as logf:
                 logf.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] /run POST action: {action}\n")
             print(f"/run POST action: {action}")
             if action == 'start':
                 result = start_sigrep()
                 if result:
-                    message = 'Started sigrep.'
+                    message = 'Started SignalReport.'
                 else:
-                    error = 'Failed to start sigrep. See sigrep_webapp_launch.log.'
+                    error = 'Failed to start SignalReport. See sigrep_webapp_launch.log.'
             elif action == 'stop':
                 stop_sigrep()
-                message = 'Stopped sigrep.'
+                message = 'Stopped SignalReport.'
+            elif action == 'restart':
+                stop_sigrep()
+                time.sleep(1)
+                result = start_sigrep()
+                if result:
+                    message = 'Restarted SignalReport.'
+                else:
+                    error = 'Failed to restart SignalReport. See sigrep_webapp_launch.log.'
         except Exception as e:
             error = str(e)
             with open('sigrep_webapp_launch.log', 'a') as logf:
@@ -234,7 +244,9 @@ def run_status():
         uptime_str=uptime_str,
         last_started_fmt=last_started_fmt,
         message=message,
-        error=error
+        error=error,
+        running=running,
+        status=status
     )
 
 @app.route('/run_status_json')

@@ -509,7 +509,7 @@ if __name__ == "__main__":
     if vosk_model: print(f"Vosk model loaded: {VOSK_MODEL_PATH}")
     else: print("WARNING: Vosk model not loaded.")
     
-    print(f"Radio Signal Reporter started: {time.ctime()}")
+    print(f"Signal Reporter started: {time.ctime()}")
 
     try:
         print("Initializing SDR..."); sdr = RtlSdr()
