@@ -184,3 +184,5 @@ cython_debug/
 signal_reports.csv
 wavs/
 signal_reports.db
+sigrep_webapp_launch.log
+sigrep_status.json

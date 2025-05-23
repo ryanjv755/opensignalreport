@@ -322,8 +322,13 @@ if not hasattr(process_stt_result, 'last_call_info'):
 SIGREP_STATUS_FILE = 'sigrep_status.json'
 
 def write_status(state):
+    # If state is 'ready', include a 'last_started' timestamp
+    if state == 'ready':
+        status = {'state': state, 'last_started': time.strftime('%Y-%m-%d %H:%M:%S')}
+    else:
+        status = {'state': state}
     with open(SIGREP_STATUS_FILE, 'w') as f:
-        json.dump({'state': state}, f)
+        json.dump(status, f)
 
 def audio_processing_thread_func():
     global is_baselining_rf, baseline_rf_power_values, dynamic_rf_vad_trigger_threshold
