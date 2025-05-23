@@ -183,3 +183,4 @@ cython_debug/
 #custom
 signal_reports.csv
 wavs/
+signal_reports.db

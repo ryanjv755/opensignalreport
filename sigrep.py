@@ -16,6 +16,7 @@ from scipy.io import wavfile
 import uuid
 import matplotlib.pyplot as plt  # At the top of your script
 import warnings
+import sqlite3  # Add for SQLite logging
 warnings.filterwarnings("ignore", message="Starting a Matplotlib GUI outside of the main thread will likely fail.")
 
 # --- Set Vosk Log Level ---
@@ -24,10 +25,19 @@ warnings.filterwarnings("ignore", message="Starting a Matplotlib GUI outside of 
 SetLogLevel(1) # Only show warnings and errors from Vosk
 
 # --- Configuration ---
-SDR_CENTER_FREQ = 145.570e6
-SDR_SAMPLE_RATE = 1.024e6
-SDR_GAIN = 6
-SDR_OFFSET_TUNING = True  # <--- Add this line
+CONFIG_PATH = 'config.json'
+def load_config():
+    with open(CONFIG_PATH, 'r') as f:
+        return json.load(f)
+
+cfg = load_config()
+
+SDR_CENTER_FREQ = float(cfg.get('SDR_CENTER_FREQ', 145570000))
+if SDR_CENTER_FREQ < 1e6:  # If user entered in MHz (e.g. 145.570)
+    SDR_CENTER_FREQ = SDR_CENTER_FREQ * 1e6
+SDR_SAMPLE_RATE = float(cfg.get('SDR_SAMPLE_RATE', 1024000))
+SDR_GAIN = int(cfg.get('SDR_GAIN', 6))
+SDR_OFFSET_TUNING = bool(cfg.get('SDR_OFFSET_TUNING', True))
 
 # VAD Wav output directory and spectrogram save option
 VAD_WAV_OUTPUT_DIR = "wavs"
@@ -103,6 +113,11 @@ try:
     else: print(f"ERROR: Vosk model path not found: {VOSK_MODEL_PATH}")
 except ImportError: print("ERROR: Vosk library not installed.")
 except Exception as e: print(f"Error loading Vosk model: {e}")
+
+# --- SQLite Setup ---
+# (Moved to signal_db.py)
+from signal_db import log_signal_report, ensure_table_exists
+ensure_table_exists()
 
 def speak_and_transmit(text_to_speak):
     """Speaks text using OS-level TTS commands via subprocess."""
@@ -272,19 +287,6 @@ def validate_callsign_format(callsign_text):
     if not callsign_text: return False
     return bool(re.match(CALLSIGN_REGEX, callsign_text.upper()))
 
-def log_signal_report(callsign, s_meter, snr, recognized_text, duration_sec, vad_trigger_threshold, timestamp=None, csv_path="signal_reports.csv", uid=None):
-    if timestamp is None:
-        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-    if uid is None:
-        uid = uuid.uuid4().hex[:16]
-    row = [uid, timestamp, callsign, s_meter, snr, duration_sec, vad_trigger_threshold, recognized_text]
-    file_exists = os.path.isfile(csv_path)
-    with open(csv_path, mode='a', newline='', encoding='utf-8') as csvfile:
-        writer = csv.writer(csvfile)
-        if not file_exists:
-            writer.writerow(['uid', 'timestamp', 'callsign', 's_meter', 'snr_db', 'duration_sec', 'vad_trigger_threshold', 'recognized_text'])
-        writer.writerow(row)
-
 def process_stt_result(text_input, iq_data_for_snr_list, uid=None, vad_trigger_threshold=None):
     text_lower = text_input.lower(); print(f"STT recognized: '{text_input}'")
     if text_lower.endswith(TRIGGER_PHRASE_END):
@@ -317,9 +319,17 @@ def process_stt_result(text_input, iq_data_for_snr_list, uid=None, vad_trigger_t
 if not hasattr(process_stt_result, 'last_call_info'):
     process_stt_result.last_call_info = {'callsign':"", 'time':0}
 
+SIGREP_STATUS_FILE = 'sigrep_status.json'
+
+def write_status(state):
+    with open(SIGREP_STATUS_FILE, 'w') as f:
+        json.dump({'state': state}, f)
+
 def audio_processing_thread_func():
     global is_baselining_rf, baseline_rf_power_values, dynamic_rf_vad_trigger_threshold
     print("Audio processing thread started.")
+    # Write 'baselining' status at start
+    write_status('baselining')
     vad_audio_buffer = np.array([], dtype=np.float32); vad_iq_buffer = []
     is_capturing_speech_rf = False; rf_silence_chunk_counter = 0
     baselining_start_time = time.time()
@@ -350,13 +360,15 @@ def audio_processing_thread_func():
 | | | |_ __   ___ _ __ \ `--. _  __ _| |_/ /___ _ __  
 | | | | '_ \ / _ \ '_ \ `--. \ |/ _` |    // _ \ '_ \ 
 \ \_/ / |_) |  __/ | | /\__/ / | (_| | |\ \  __/ |_) |
- \___/| .__/ \___|_| |_\____/|_|\__, \_| \_\___| .__/ 
+ \___/| .__/ \___|_| |_|\____/|_|\__, \_| \_\___| .__/ 
       | |                        __/ |         | |    
       |_|                       |___/          |_|    
 """)
                         print(f"--- RF Baselining complete. Threshold: {dynamic_rf_vad_trigger_threshold:.8f} ---")
                     else: print("Warning: No RF data for baselining. Using default."); dynamic_rf_vad_trigger_threshold = 1e-7 
                     is_baselining_rf = False; baseline_rf_power_values.clear()
+                    # Write 'ready' status after baselining
+                    write_status('ready')
                 continue
             if is_capturing_speech_rf:
                 vad_audio_buffer = np.concatenate((vad_audio_buffer, audio_chunk_normalized))
