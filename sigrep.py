@@ -12,6 +12,8 @@ import platform   # To detect OS
 import shlex      # For quoting command arguments safely
 from vosk import Model, KaldiRecognizer, SetLogLevel # Import SetLogLevel
 import csv
+from scipy.io import wavfile
+import uuid
 
 # --- Set Vosk Log Level ---
 # Set before initializing any Vosk objects to reduce startup verbosity
@@ -24,12 +26,16 @@ SDR_SAMPLE_RATE = 1.024e6
 SDR_GAIN = 6
 SDR_NUM_SAMPLES_PER_CHUNK = 16384
 
+# VAD Wav output directory
+VAD_WAV_OUTPUT_DIR = "wavs"
+
+# VAD parameters
 NFM_FILTER_CUTOFF = 4000
 AUDIO_DOWNSAMPLE_RATE = 16000
 STT_ENGINE = "vosk"
 VOSK_MODEL_PATH = "vosk-model-en-us-0.22-lgraph"
-BASELINE_DURATION_SECONDS = 3
-RF_VAD_STD_MULTIPLIER = 3.5
+BASELINE_DURATION_SECONDS = 5
+RF_VAD_STD_MULTIPLIER = .2
 VAD_SPEECH_CAPTURE_SECONDS = 10.0
 VAD_MAX_SPEECH_SAMPLES = int(VAD_SPEECH_CAPTURE_SECONDS * AUDIO_DOWNSAMPLE_RATE)
 VAD_MIN_SPEECH_SAMPLES = int(0.75 * AUDIO_DOWNSAMPLE_RATE)
@@ -209,17 +215,35 @@ def estimate_s_meter(power_dbfs):
     return closest_s_unit
 
 def calculate_signal_metrics(iq_samples_list):
-    if not iq_samples_list: return "Unknown", 0.0
+    if not iq_samples_list:
+        return "Unknown", 0.0
     try:
         full_iq_segment = np.concatenate(iq_samples_list)
-        if len(full_iq_segment) == 0: return "Unknown", 0.0
+        if len(full_iq_segment) == 0:
+            return "Unknown", 0.0
         signal_plus_noise_power = np.mean(np.abs(full_iq_segment)**2)
-        if signal_plus_noise_power < 1e-12: return "S0", 0.0
+        if signal_plus_noise_power < 1e-12:
+            return "S0", 0.0
         signal_plus_noise_dbfs = 10 * np.log10(signal_plus_noise_power)
-        snr_db = 15.0
+
+        # Estimate noise from first and last 10% of the segment
+        n = len(full_iq_segment)
+        edge = max(1, n // 10)
+        noise_samples = np.concatenate([full_iq_segment[:edge], full_iq_segment[-edge:]])
+        noise_power = np.mean(np.abs(noise_samples)**2)
+        if noise_power < 1e-12:
+            noise_power = 1e-12  # avoid log(0)
+        noise_dbfs = 10 * np.log10(noise_power)
+
+        snr_db = signal_plus_noise_dbfs - noise_dbfs
+        if snr_db < 0:
+            snr_db = 0.0
+
         s_meter_reading = estimate_s_meter(signal_plus_noise_dbfs)
         return s_meter_reading, snr_db
-    except Exception as e: print(f"Error calculating signal metrics: {e}"); return "Unknown", 0.0
+    except Exception as e:
+        print(f"Error calculating signal metrics: {e}")
+        return "Unknown", 0.0
 
 def convert_nato_to_text(nato_words_from_stt):
     callsign_chars = []
@@ -314,7 +338,15 @@ def audio_processing_thread_func():
                 if process_this_rf_segment:
                     recognized_text_segment = None
                     if len(vad_audio_buffer) >= VAD_MIN_SPEECH_SAMPLES:
-                        audio_data_int16 = (vad_audio_buffer * 32767).astype(np.int16); audio_bytes = audio_data_int16.tobytes()
+                        audio_data_int16 = (vad_audio_buffer * 32767).astype(np.int16)
+                        # --- Save VAD capture as WAV file ---
+                        os.makedirs(VAD_WAV_OUTPUT_DIR, exist_ok=True)
+                        wav_filename = f"vad_capture_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}.wav"
+                        wav_path = os.path.join(VAD_WAV_OUTPUT_DIR, wav_filename)
+                        wavfile.write(wav_path, AUDIO_DOWNSAMPLE_RATE, audio_data_int16)
+                        print(f"Saved VAD capture to {wav_path}")
+                        # --- End WAV save ---
+                        audio_bytes = audio_data_int16.tobytes()
                         if vosk_recognizer_instance:
                             if vosk_recognizer_instance.AcceptWaveform(audio_bytes): result = json.loads(vosk_recognizer_instance.Result()); recognized_text_segment = result.get('text', '')
                             else: final_result_json = json.loads(vosk_recognizer_instance.FinalResult()); recognized_text_segment = final_result_json.get('text', '')
