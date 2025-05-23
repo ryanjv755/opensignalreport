@@ -42,19 +42,14 @@ The project logs successful reports to a CSV file and can optionally save captur
 
 ## Installation
 
-1.  **Clone the repository (if applicable) or save the script.**
-    ```bash
-    # git clone ... (if you put it on Git)
-    # cd OpenSignalReport
-    ```
-2.  **Install Python dependencies:**
+1.  **Install Python dependencies:**
     ```bash
     pip install numpy scipy rtlsdr SpeechRecognition vosk soundfile matplotlib
     ```
     * `SpeechRecognition` is still useful for `sr.AudioData` objects if using Google STT as a fallback, and for its microphone class if you were to adapt the script for direct mic input.
     * `soundfile` and `matplotlib` are needed if you enable VAD WAV saving and spectrogram generation.
 
-3.  **Download a Vosk Language Model:**
+2.  **Download a Vosk Language Model:**
     * Go to the [Vosk Models Page](https://alphacephei.com/vosk/models).
     * Download a suitable English model (e.g., `vosk-model-en-us-0.22-lgraph` is recommended for better accuracy).
     * Extract the model folder and place it in a known location. Update `VOSK_MODEL_PATH` in the script.
@@ -117,8 +112,6 @@ Open the Python script (`.py` file) and modify the constants in the "Configurati
     * Ensure the APRS-K1 PRO cable is functioning and its Auto PTT is triggering.
 
 ## Future Possible Functionality
-(Keep the list from before or customize it)
-* Implement a software squelch before VAD.
 * More precise SNR/S-meter calculations.
 * Web interface/dashboard.
 * Database logging (e.g., SQLite).
