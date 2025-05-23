@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="main-container"><h1>Signal Reports Log</h1><table border=0>
+<tr><th>Timestamp</th><th>Callsign</th><th>S-Meter</th><th>SNR</th><th>Duration</th><th>Text</th><th>Play</th><th style="width:120px;">Spectrogram</th></tr>
+{% for r in reports %}
+<tr>
+  <td>{{ r[1] }}</td>
+  <td>{{ r[2] }}</td>
+  <td>{{ r[3] }}</td>
+  <td>{{ '%.2f'|format(r[4]|float) if r[4]|float is not none else r[4] }}</td>
+  <td>{{ r[5] }}</td>
+  <td>{{ r[7] }}</td>
+  <td>{% if r[8] %}<audio controls style="width:120px;"><source src="{{ r[8] }}" type="audio/wav">Your browser does not support the audio element.</audio>{% endif %}</td>
+  <td>{% if r[9] %}<a href="{{ r[9] }}" target="_blank"><img src="{{ r[10] }}" alt="Spectrogram" style="max-width:220px;max-height:120px;display:block;margin:0 auto;"></a>{% endif %}</td>
+</tr>
+{% endfor %}
+</table></div>
+{% endblock %}

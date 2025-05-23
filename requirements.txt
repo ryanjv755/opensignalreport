@@ -1,0 +1,8 @@
+flask
+psutil
+numpy
+scipy
+matplotlib
+rtlsdr
+vosk
+uuid

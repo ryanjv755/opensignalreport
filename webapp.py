@@ -183,7 +183,6 @@ def run_status():
                 action = 'start'
             elif 'stop' in request.form:
                 action = 'stop'
-            # Log the action attempt
             with open('sigrep_webapp_launch.log', 'a') as logf:
                 logf.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] /run POST action: {action}\n")
             print(f"/run POST action: {action}")
@@ -200,10 +199,9 @@ def run_status():
             error = str(e)
             with open('sigrep_webapp_launch.log', 'a') as logf:
                 logf.write(f"Exception in /run POST: {e}\n")
-        time.sleep(1)  # Give time for process to start/stop
+        time.sleep(1)
     status = get_sigrep_status()
     running = is_sigrep_running()
-    # Uptime/last started
     last_started = status.get('last_started', None)
     if last_started and last_started != 'N/A':
         try:
@@ -217,66 +215,27 @@ def run_status():
     else:
         last_started_fmt = 'N/A'
         uptime_str = 'N/A'
-    # System resource usage
     cpu = psutil.cpu_percent(interval=0.1)
     mem = psutil.virtual_memory()
     disk = psutil.disk_usage('.')
-    # Live status auto-refresh via JS fetch
-    # Set initial button state based on running
-    html = NAVBAR + GLOBAL_STYLE + f'''
-    <div class="main-container">
-    <h1>Run Status (Live)</h1>
-    <div id="spinner" class="spinner"></div>
-    <div id="toast" style="display:none;position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#222;color:#fff;padding:12px 28px;border-radius:8px;z-index:9999;font-size:1.1em;"></div>
-    <form id="run-form" method="post" style="margin-bottom:20px;display:flex;gap:12px;align-items:center;">
-      <input id="start-btn" name="start" type="submit" value="Start Radio" style="background:#5cb85c; color:#fff; font-weight:bold;">
-      <input id="stop-btn" name="stop" type="submit" value="Stop Radio" style="background:#d9534f; color:#fff; font-weight:bold;">
-    </form>
-    <div id="status-block" style="margin-bottom:18px;"></div>
-    <div style="margin-bottom:18px;">
-      <b>System:</b> CPU: {cpu:.1f}% | RAM: {mem.percent:.1f}% | Disk: {disk.percent:.1f}%<br>
-      <b>SDR:</b> Freq: {float(cfg['SDR_CENTER_FREQ'])/1e6:.3f} MHz | SR: {cfg['SDR_SAMPLE_RATE']} | Gain: {cfg['SDR_GAIN']} dB<br>
-      <b>Uptime:</b> {uptime_str} | <b>Last Started:</b> {last_started_fmt}
-    </div>
-    </div>
-    <script>
-    // Live status fetch
-    function fetchStatus() {{
-      fetch('/run_status_json').then(r=>r.json()).then(data=>{{
-        let s = data;
-        let html = '';
-        if (s.running) {{
-          if (s.state === 'baselining') html += '<div class="msg" style="color:orange;font-weight:bold;">Radio is baselining... Please wait.</div>';
-          else if (s.state === 'ready') html += '<div class="msg" style="color:green;font-weight:bold;">Radio is running and ready.</div>';
-          else html += '<div class="msg" style="color:gray;">Radio is running (status unknown).</div>';
-        }} else {{
-          html += '<div class="msg" style="color:red;">Radio is stopped.</div>';
-        }}
-        if (s.error) html += '<div class="msg" style="color:red;">'+s.error+'</div>';
-        document.getElementById('status-block').innerHTML = html;
-        // Button state
-        document.getElementById('start-btn').disabled = s.running;
-        document.getElementById('stop-btn').disabled = !s.running;
-      }});
-    }}
-    setInterval(fetchStatus, 3000);
-    fetchStatus();
-    // Toast feedback
-    function showToast(msg, color) {{
-      let t = document.getElementById('toast');
-      t.innerText = msg;
-      t.style.background = color || '#222';
-      t.style.display = 'block';
-      setTimeout(()=>{{t.style.display='none';}}, 3000);
-    }}
-    // Show toast for server feedback
-    let msg = {json.dumps(message)};
-    let err = {json.dumps(error)};
-    if (msg && msg.length > 0) showToast(msg, '#0078d7');
-    if (err && err.length > 0) showToast(err, '#d9534f');
-    </script>
-    '''
-    return html
+    freq_mhz = float(cfg['SDR_CENTER_FREQ'])/1e6
+    sample_rate = cfg['SDR_SAMPLE_RATE']
+    gain = cfg['SDR_GAIN']
+    return render_template(
+        'run.html',
+        navbar=NAVBAR,
+        title='Run',
+        cpu=f"{cpu:.1f}",
+        ram=f"{mem.percent:.1f}",
+        disk=f"{disk.percent:.1f}",
+        freq_mhz=f"{freq_mhz:.3f}",
+        sample_rate=sample_rate,
+        gain=gain,
+        uptime_str=uptime_str,
+        last_started_fmt=last_started_fmt,
+        message=message,
+        error=error
+    )
 
 @app.route('/run_status_json')
 def run_status_json():
@@ -415,127 +374,23 @@ def config():
 @app.route('/logs')
 def logs():
     reports = get_all_signal_reports()
-    html = NAVBAR + GLOBAL_STYLE + '''<div class="main-container"><h1>Signal Reports Log</h1><table border=0>
-    <tr><th>Timestamp</th><th>Callsign</th><th>S-Meter</th><th>SNR</th><th>Duration</th><th>Text</th><th>Play</th><th style="width:120px;">Spectrogram</th></tr>'''
+    # Attach wav and png URLs for each report
+    report_rows = []
     for r in reports:
         uid = r[0]
-        # Find WAV file
         wav_files = glob.glob(f'wavs/vad_capture_*_{uid}*.wav')
-        wav_player = ''
-        if wav_files:
-            wav_url = f'/wavs/{os.path.basename(wav_files[0])}'
-            wav_player = f'<audio controls style="width:120px;"><source src="{wav_url}" type="audio/wav">Your browser does not support the audio element.</audio>'
-        # Find PNG spectrogram file (should match vad_capture_*_{uid}*.png)
+        wav_url = f'/wavs/{os.path.basename(wav_files[0])}' if wav_files else ''
         png_files = glob.glob(f'wavs/vad_capture_*_{uid}*.png')
-        png_link = ''
-        if png_files:
-            png_url = f'/spectrogram/{os.path.basename(png_files[0])}'
-            png_link = f'<a href="{png_url}" target="_blank"><img src="/wavs/{os.path.basename(png_files[0])}" alt="Spectrogram" style="max-width:220px;max-height:120px;display:block;margin:0 auto;"></a>'
-        # Format SNR to 2 decimals
-        try:
-            snr_val = float(r[4])
-            snr_display = f"{snr_val:.2f}"
-        except Exception:
-            snr_display = r[4]
-        html += f'<tr><td>{r[1]}</td><td>{r[2]}</td><td>{r[3]}</td><td>{snr_display}</td><td>{r[5]}</td><td>{r[7]}</td><td>{wav_player}</td><td>{png_link}</td></tr>'
-    html += '</table></div>'
-    return html
+        png_url = f'/spectrogram/{os.path.basename(png_files[0])}' if png_files else ''
+        png_thumb = f'/wavs/{os.path.basename(png_files[0])}' if png_files else ''
+        # Add extra fields for template
+        report_rows.append(list(r) + [wav_url, png_url, png_thumb])
+    return render_template('logs.html', navbar=NAVBAR, title='Logs', reports=report_rows)
 
 @app.route('/spectrogram/<filename>')
 def spectrogram_page(filename):
-    # Show the spectrogram image on its own page with zoom/pan
     img_url = f'/wavs/{filename}'
-    html = NAVBAR + GLOBAL_STYLE + '''
-    <div class="main-container">
-      <h1>Spectrogram</h1>
-      <div id="spectrogram-container" style="overflow:auto; max-width:98vw; max-height:90vh; border:1px solid var(--border,#ccc); background:var(--table,#fff); position:relative;">
-        <img id="spectrogram-img" src="''' + img_url + '''" style="max-width:none; max-height:none; display:block; margin:0 auto; cursor:grab;" alt="Spectrogram">
-      </div>
-      <div style="margin-top:18px;">
-        <button onclick="zoomIn()">Zoom In</button>
-        <button onclick="zoomOut()">Zoom Out</button>
-        <button onclick="resetZoom()">Reset</button>
-      </div>
-    </div>
-    <script>
-    let scale = 1.0;
-    let originX = 0, originY = 0;
-    let isPanning = false, startX = 0, startY = 0, imgX = 0, imgY = 0;
-    const img = document.getElementById('spectrogram-img');
-    const container = document.getElementById('spectrogram-container');
-    function updateTransform() {
-      img.style.transform = `scale(${scale}) translate(${imgX/scale}px,${imgY/scale}px)`;
-    }
-    function zoomIn() {
-      scale = Math.min(scale * 1.25, 10);
-      updateTransform();
-    }
-    function zoomOut() {
-      scale = Math.max(scale / 1.25, 0.2);
-      updateTransform();
-    }
-    function resetZoom() {
-      scale = 1.0; imgX = 0; imgY = 0;
-      updateTransform();
-    }
-    img.addEventListener('mousedown', function(e) {
-      isPanning = true;
-      startX = e.clientX - imgX;
-      startY = e.clientY - imgY;
-      img.style.cursor = 'grabbing';
-    });
-    document.addEventListener('mousemove', function(e) {
-      if (!isPanning) return;
-      imgX = e.clientX - startX;
-      imgY = e.clientY - startY;
-      updateTransform();
-    });
-    document.addEventListener('mouseup', function(e) {
-      isPanning = false;
-      img.style.cursor = 'grab';
-    });
-    img.addEventListener('wheel', function(e) {
-      e.preventDefault();
-      if (e.deltaY < 0) zoomIn();
-      else zoomOut();
-    });
-    // Touch support for mobile
-    let lastTouchDist = null;
-    img.addEventListener('touchstart', function(e) {
-      if (e.touches.length === 2) {
-        lastTouchDist = Math.hypot(
-          e.touches[0].clientX - e.touches[1].clientX,
-          e.touches[0].clientY - e.touches[1].clientY
-        );
-      } else if (e.touches.length === 1) {
-        isPanning = true;
-        startX = e.touches[0].clientX - imgX;
-        startY = e.touches[0].clientY - imgY;
-      }
-    });
-    img.addEventListener('touchmove', function(e) {
-      if (e.touches.length === 2 && lastTouchDist !== null) {
-        let newDist = Math.hypot(
-          e.touches[0].clientX - e.touches[1].clientX,
-          e.touches[0].clientY - e.touches[1].clientY
-        );
-        let factor = newDist / lastTouchDist;
-        scale = Math.max(0.2, Math.min(10, scale * factor));
-        lastTouchDist = newDist;
-        updateTransform();
-      } else if (e.touches.length === 1 && isPanning) {
-        imgX = e.touches[0].clientX - startX;
-        imgY = e.touches[0].clientY - startY;
-        updateTransform();
-      }
-    });
-    img.addEventListener('touchend', function(e) {
-      if (e.touches.length < 2) lastTouchDist = null;
-      if (e.touches.length === 0) isPanning = false;
-    });
-    </script>
-    '''
-    return html
+    return render_template('spectrogram.html', navbar=NAVBAR, title='Spectrogram', img_url=img_url)
 
 @app.route('/wavs/<path:filename>')
 def serve_wavs(filename):

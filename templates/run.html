@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Run Status (Live)</h1>
+<div id="spinner" class="spinner"></div>
+<div id="toast" style="display:none;position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#222;color:#fff;padding:12px 28px;border-radius:8px;z-index:9999;font-size:1.1em;"></div>
+<form id="run-form" method="post" style="margin-bottom:20px;display:flex;gap:12px;align-items:center;">
+  <input id="start-btn" name="start" type="submit" value="Start Radio" style="background:#5cb85c; color:#fff; font-weight:bold;">
+  <input id="stop-btn" name="stop" type="submit" value="Stop Radio" style="background:#d9534f; color:#fff; font-weight:bold;">
+</form>
+<div id="status-block" style="margin-bottom:18px;"></div>
+<div style="margin-bottom:18px;">
+  <b>System:</b> CPU: {{ cpu }}% | RAM: {{ ram }}% | Disk: {{ disk }}%<br>
+  <b>SDR:</b> Freq: {{ freq_mhz }} MHz | SR: {{ sample_rate }} | Gain: {{ gain }} dB<br>
+  <b>Uptime:</b> {{ uptime_str }} | <b>Last Started:</b> {{ last_started_fmt }}
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="/static/run.js"></script>
+{% endblock %}
