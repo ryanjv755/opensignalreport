@@ -14,6 +14,7 @@ from vosk import Model, KaldiRecognizer, SetLogLevel # Import SetLogLevel
 import csv
 from scipy.io import wavfile
 import uuid
+import matplotlib.pyplot as plt  # At the top of your script
 
 # --- Set Vosk Log Level ---
 # Set before initializing any Vosk objects to reduce startup verbosity
@@ -26,15 +27,16 @@ SDR_SAMPLE_RATE = 1.024e6
 SDR_GAIN = 6
 SDR_NUM_SAMPLES_PER_CHUNK = 16384
 
-# VAD Wav output directory
+# VAD Wav output directory and spectrogram save option
 VAD_WAV_OUTPUT_DIR = "wavs"
+SAVE_SPECTROGRAM = True  # Toggle as needed
 
 # VAD parameters
 NFM_FILTER_CUTOFF = 4000
 AUDIO_DOWNSAMPLE_RATE = 16000
 STT_ENGINE = "vosk"
 VOSK_MODEL_PATH = "vosk-model-en-us-0.22-lgraph"
-BASELINE_DURATION_SECONDS = 5
+BASELINE_DURATION_SECONDS = 10
 RF_VAD_STD_MULTIPLIER = .2
 VAD_SPEECH_CAPTURE_SECONDS = 10.0
 VAD_MAX_SPEECH_SAMPLES = int(VAD_SPEECH_CAPTURE_SECONDS * AUDIO_DOWNSAMPLE_RATE)
@@ -346,6 +348,18 @@ def audio_processing_thread_func():
                         wavfile.write(wav_path, AUDIO_DOWNSAMPLE_RATE, audio_data_int16)
                         print(f"Saved VAD capture to {wav_path}")
                         # --- End WAV save ---
+                        if SAVE_SPECTROGRAM:
+                            plt.figure(figsize=(8, 4))
+                            plt.specgram(vad_audio_buffer, NFFT=256, Fs=AUDIO_DOWNSAMPLE_RATE, noverlap=128, cmap='viridis')
+                            plt.title("VAD Capture Spectrogram")
+                            plt.xlabel("Time (s)")
+                            plt.ylabel("Frequency (Hz)")
+                            plt.colorbar(label="Intensity (dB)")
+                            spec_filename = wav_filename.replace('.wav', '.png')
+                            spec_path = os.path.join(VAD_WAV_OUTPUT_DIR, spec_filename)
+                            plt.savefig(spec_path, bbox_inches='tight')
+                            plt.close()
+                            print(f"Saved spectrogram to {spec_path}")
                         audio_bytes = audio_data_int16.tobytes()
                         if vosk_recognizer_instance:
                             if vosk_recognizer_instance.AcceptWaveform(audio_bytes): result = json.loads(vosk_recognizer_instance.Result()); recognized_text_segment = result.get('text', '')
