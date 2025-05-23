@@ -256,18 +256,17 @@ def calculate_signal_metrics(iq_samples_list):
             return "S0", 0.0
         signal_plus_noise_dbfs = 10 * np.log10(signal_plus_noise_power)
 
-        # Estimate noise from first and last 10% of the segment
+        # Use 20% of the segment for noise estimation if possible
         n = len(full_iq_segment)
-        edge = max(1, n // 10)
+        edge = max(1, n // 5)
         noise_samples = np.concatenate([full_iq_segment[:edge], full_iq_segment[-edge:]])
-        noise_power = np.mean(np.abs(noise_samples)**2)
+        # Optionally, use median to reduce outlier impact
+        noise_power = np.median(np.abs(noise_samples)**2)
         if noise_power < 1e-12:
-            noise_power = 1e-12  # avoid log(0)
+            noise_power = 1e-12
         noise_dbfs = 10 * np.log10(noise_power)
 
-        snr_db = signal_plus_noise_dbfs - noise_dbfs
-        if snr_db < 0:
-            snr_db = 0.0
+        snr_db = max(0.0, signal_plus_noise_dbfs - noise_dbfs)
 
         s_meter_reading = estimate_s_meter(signal_plus_noise_dbfs)
         return s_meter_reading, snr_db
