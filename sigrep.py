@@ -259,18 +259,20 @@ def validate_callsign_format(callsign_text):
     if not callsign_text: return False
     return bool(re.match(CALLSIGN_REGEX, callsign_text.upper()))
 
-def log_signal_report(callsign, s_meter, snr, recognized_text, timestamp=None, csv_path="signal_reports.csv"):
+def log_signal_report(callsign, s_meter, snr, recognized_text, timestamp=None, csv_path="signal_reports.csv", uid=None):
     if timestamp is None:
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-    row = [timestamp, callsign, s_meter, snr, recognized_text]
+    if uid is None:
+        uid = uuid.uuid4().hex[:16]
+    row = [uid, timestamp, callsign, s_meter, snr, recognized_text]
     file_exists = os.path.isfile(csv_path)
     with open(csv_path, mode='a', newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
         if not file_exists:
-            writer.writerow(["timestamp", "callsign", "s_meter", "snr_db", "recognized_text"])
+            writer.writerow(['uid', 'timestamp', 'callsign', 's_meter', 'snr_db', 'recognized_text'])
         writer.writerow(row)
 
-def process_stt_result(text_input, iq_data_for_snr_list):
+def process_stt_result(text_input, iq_data_for_snr_list, uid=None):
     text_lower = text_input.lower(); print(f"STT recognized: '{text_input}'")
     if text_lower.endswith(TRIGGER_PHRASE_END):
         try:
@@ -290,7 +292,7 @@ def process_stt_result(text_input, iq_data_for_snr_list):
                     else:
                         process_stt_result.last_call_info = {'callsign': actual_callsign_text, 'time': current_time}
                         s_meter, snr = calculate_signal_metrics(iq_data_for_snr_list)
-                        log_signal_report(actual_callsign_text, s_meter, snr, text_input)
+                        log_signal_report(actual_callsign_text, s_meter, snr, text_input, uid=uid)
                         response_text = f"{actual_callsign_text}, Your signal is {s_meter} with an SNR of {snr:.1f} dB."
                         print(f"Response: {response_text}")
                         speak_and_transmit(response_text)
@@ -311,6 +313,7 @@ def audio_processing_thread_func():
         try:
             vosk_recognizer_instance = KaldiRecognizer(vosk_model, AUDIO_DOWNSAMPLE_RATE, VOSK_GRAMMAR_STR)
             print("Vosk KaldiRecognizer initialized.")
+            print("RF Baselining in progress... Please wait for baseline to complete before transmitting signal.")
         except Exception as e: print(f"Error initializing Vosk KaldiRecognizer: {e}"); vosk_recognizer_instance = None
     while True:
         try:
@@ -319,10 +322,23 @@ def audio_processing_thread_func():
                 baseline_rf_power_values.append(chunk_rf_power)
                 if (time.time() - baselining_start_time) >= BASELINE_DURATION_SECONDS:
                     if baseline_rf_power_values:
-                        avg_rf_noise = np.mean(baseline_rf_power_values); std_rf_noise = np.std(baseline_rf_power_values)
+                        avg_rf_noise = np.mean(baseline_rf_power_values)
+                        std_rf_noise = np.std(baseline_rf_power_values)
                         dynamic_rf_vad_trigger_threshold = avg_rf_noise + (RF_VAD_STD_MULTIPLIER * std_rf_noise)
-                        if dynamic_rf_vad_trigger_threshold < avg_rf_noise * 1.2 : dynamic_rf_vad_trigger_threshold = avg_rf_noise * 1.2
-                        if dynamic_rf_vad_trigger_threshold == 0 and avg_rf_noise == 0 : dynamic_rf_vad_trigger_threshold = 1e-9
+                        if dynamic_rf_vad_trigger_threshold < avg_rf_noise * 1.2:
+                            dynamic_rf_vad_trigger_threshold = avg_rf_noise * 1.2
+                        if dynamic_rf_vad_trigger_threshold == 0 and avg_rf_noise == 0:
+                            dynamic_rf_vad_trigger_threshold = 1e-9
+                        print(r"""
+ _____                  _____ _      ______           
+|  _  |                /  ___(_)     | ___ \          
+| | | |_ __   ___ _ __ \ `--. _  __ _| |_/ /___ _ __  
+| | | | '_ \ / _ \ '_ \ `--. \ |/ _` |    // _ \ '_ \ 
+\ \_/ / |_) |  __/ | | /\__/ / | (_| | |\ \  __/ |_) |
+ \___/| .__/ \___|_| |_\____/|_|\__, \_| \_\___| .__/ 
+      | |                        __/ |         | |    
+      |_|                       |___/          |_|    
+""")
                         print(f"--- RF Baselining complete. Threshold: {dynamic_rf_vad_trigger_threshold:.8f} ---")
                     else: print("Warning: No RF data for baselining. Using default."); dynamic_rf_vad_trigger_threshold = 1e-7 
                     is_baselining_rf = False; baseline_rf_power_values.clear()
@@ -341,32 +357,52 @@ def audio_processing_thread_func():
                     recognized_text_segment = None
                     if len(vad_audio_buffer) >= VAD_MIN_SPEECH_SAMPLES:
                         audio_data_int16 = (vad_audio_buffer * 32767).astype(np.int16)
-                        # --- Save VAD capture as WAV file ---
                         os.makedirs(VAD_WAV_OUTPUT_DIR, exist_ok=True)
-                        wav_filename = f"vad_capture_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}.wav"
+                        capture_uid = uuid.uuid4().hex[:16]  # Generate UID ONCE here
+                        wav_filename = f"vad_capture_{time.strftime('%Y%m%d_%H%M%S')}_{capture_uid}.wav"
                         wav_path = os.path.join(VAD_WAV_OUTPUT_DIR, wav_filename)
                         wavfile.write(wav_path, AUDIO_DOWNSAMPLE_RATE, audio_data_int16)
                         print(f"Saved VAD capture to {wav_path}")
-                        # --- End WAV save ---
+                        audio_bytes = audio_data_int16.tobytes()
+                        recognized_text_segment = None
+                        if vosk_recognizer_instance:
+                            if vosk_recognizer_instance.AcceptWaveform(audio_bytes):
+                                result = json.loads(vosk_recognizer_instance.Result())
+                                recognized_text_segment = result.get('text', '')
+                            else:
+                                final_result_json = json.loads(vosk_recognizer_instance.FinalResult())
+                                recognized_text_segment = final_result_json.get('text', '')
+                            if not recognized_text_segment:
+                                print("STT: Speech not recognized.")
+                        else:
+                            print("STT: Recognizer not available.")
+                        callsign_for_plot = "Unknown"
+                        if recognized_text_segment:
+                            words = recognized_text_segment.lower().split()
+                            nato_callsign_words = []
+                            for word in words:
+                                if word == "signal":
+                                    break
+                                nato_callsign_words.append(word)
+                            callsign_candidate = convert_nato_to_text(nato_callsign_words).upper()
+                            if validate_callsign_format(callsign_candidate):
+                                callsign_for_plot = callsign_candidate
                         if SAVE_SPECTROGRAM:
+                            plot_time = time.strftime("%Y-%m-%d %H:%M:%S")
                             plt.figure(figsize=(8, 4))
                             plt.specgram(vad_audio_buffer, NFFT=256, Fs=AUDIO_DOWNSAMPLE_RATE, noverlap=128, cmap='viridis')
-                            plt.title("VAD Capture Spectrogram")
+                            plt.title(f"Callsign: {callsign_for_plot}  {plot_time}\nUID: {capture_uid}")
                             plt.xlabel("Time (s)")
                             plt.ylabel("Frequency (Hz)")
                             plt.colorbar(label="Intensity (dB)")
-                            spec_filename = wav_filename.replace('.wav', '.png')
+                            spec_filename = wav_filename.replace('.wav', f'_{callsign_for_plot}.png')
                             spec_path = os.path.join(VAD_WAV_OUTPUT_DIR, spec_filename)
                             plt.savefig(spec_path, bbox_inches='tight')
                             plt.close()
                             print(f"Saved spectrogram to {spec_path}")
-                        audio_bytes = audio_data_int16.tobytes()
-                        if vosk_recognizer_instance:
-                            if vosk_recognizer_instance.AcceptWaveform(audio_bytes): result = json.loads(vosk_recognizer_instance.Result()); recognized_text_segment = result.get('text', '')
-                            else: final_result_json = json.loads(vosk_recognizer_instance.FinalResult()); recognized_text_segment = final_result_json.get('text', '')
-                            if not recognized_text_segment: print("STT: Speech not recognized.")
-                        else: print("STT: Recognizer not available.")
-                        if recognized_text_segment: process_stt_result(recognized_text_segment, list(vad_iq_buffer))
+                        if recognized_text_segment:
+                            # Pass capture_uid to process_stt_result or directly to log_signal_report
+                            process_stt_result(recognized_text_segment, list(vad_iq_buffer), uid=capture_uid)
                     vad_audio_buffer = np.array([], dtype=np.float32); vad_iq_buffer.clear()
                     is_capturing_speech_rf = False; rf_silence_chunk_counter = 0
                     if vosk_recognizer_instance: vosk_recognizer_instance.Reset()
