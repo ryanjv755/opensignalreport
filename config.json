@@ -15,5 +15,6 @@
   "STT_ENGINE": "vosk",
   "VOSK_MODEL_PATH": "vosk-model-en-us-0.22-lgraph",
   "WEB_PORT": 5000,
-  "WEB_HOST": "0.0.0.0"
+  "WEB_HOST": "0.0.0.0",
+  "S9_DBFS_REF": -62
 }

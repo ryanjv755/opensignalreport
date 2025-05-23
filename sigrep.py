@@ -11,7 +11,6 @@ import subprocess # For OS-level TTS
 import platform   # To detect OS
 import shlex      # For quoting command arguments safely
 from vosk import Model, KaldiRecognizer, SetLogLevel # Import SetLogLevel
-import csv
 from scipy.io import wavfile
 import uuid
 import matplotlib.pyplot as plt  # At the top of your script
@@ -79,6 +78,9 @@ S_METER_DBFS_MAP = {
     -80: "S6", -74: "S7", -68: "S8", -62: "S9", -56: "S9+6dB", -50: "S9+12dB",
     -44: "S9+18dB", -38: "S9+24dB", -32: "S9+30dB", -26: "S9+36dB", -20: "S9+40dB"
 }
+
+# S9 dBFS reference, configurable via config.json (default -62)
+S9_DBFS_REF = float(cfg.get('S9_DBFS_REF', -62))
 
 HPF_CUTOFF_HZ = 150  # High-pass filter cutoff frequency in Hz
 HPF_ORDER = 4        # 4th order Butterworth
@@ -236,7 +238,8 @@ def estimate_s_meter(power_dbfs):
     for dbfs_level, s_unit_val in s_map_sorted:
         if power_dbfs >= dbfs_level: closest_s_unit = s_unit_val
         else: break
-    s9_dbfs_level = -62
+    # Use configurable S9 dBFS reference
+    s9_dbfs_level = S9_DBFS_REF
     if power_dbfs > s9_dbfs_level:
         s9_plus_db_raw = power_dbfs - s9_dbfs_level
         s9_plus_db_value = int(round(s9_plus_db_raw))
@@ -507,7 +510,6 @@ if __name__ == "__main__":
     else: print("WARNING: Vosk model not loaded.")
     
     print(f"Radio Signal Reporter started: {time.ctime()}")
-    print("INFO: RF Offset tuning feature has been removed. SDR tunes directly to center frequency.")
 
     try:
         print("Initializing SDR..."); sdr = RtlSdr()
