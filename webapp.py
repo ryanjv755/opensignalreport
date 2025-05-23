@@ -381,17 +381,19 @@ def config():
 @app.route('/logs')
 def logs():
     reports = get_all_signal_reports()
-    # Attach wav and png URLs for each report
+    # Show all reports, including those with 'Unknown' callsign
     report_rows = []
     for r in reports:
         uid = r[0]
+        callsign = r[1] if len(r) > 1 else ''
+        # Optionally, highlight or mark 'Unknown' callsigns in the UI
         wav_files = glob.glob(f'wavs/vad_capture_*_{uid}*.wav')
         wav_url = f'/wavs/{os.path.basename(wav_files[0])}' if wav_files else ''
         png_files = glob.glob(f'wavs/vad_capture_*_{uid}*.png')
         png_url = f'/spectrogram/{os.path.basename(png_files[0])}' if png_files else ''
         png_thumb = f'/wavs/{os.path.basename(png_files[0])}' if png_files else ''
-        # Add extra fields for template
         report_rows.append(list(r) + [wav_url, png_url, png_thumb])
+    # No filtering: all entries, including 'Unknown', are shown
     return render_template('logs.html', navbar=NAVBAR, title='Logs', reports=report_rows)
 
 @app.route('/spectrogram/<filename>')

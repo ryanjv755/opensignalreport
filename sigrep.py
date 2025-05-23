@@ -291,32 +291,32 @@ def validate_callsign_format(callsign_text):
 
 def process_stt_result(text_input, iq_data_for_snr_list, uid=None, vad_trigger_threshold=None):
     text_lower = text_input.lower(); print(f"STT recognized: '{text_input}'")
-    if text_lower.endswith(TRIGGER_PHRASE_END):
-        try:
-            words = text_lower.split(); nato_callsign_words = []
-            for word in words:
-                if word == "signal": break
-                nato_callsign_words.append(word)
-            if not nato_callsign_words: print("PSR: No callsign words found.")
+    # Always log, even if callsign is invalid or missing
+    try:
+        words = text_lower.split(); nato_callsign_words = []
+        for word in words:
+            if word == "signal": break
+            nato_callsign_words.append(word)
+        actual_callsign_text = convert_nato_to_text(nato_callsign_words).upper() if nato_callsign_words else ''
+        current_time = time.time()
+        s_meter, snr = calculate_signal_metrics(iq_data_for_snr_list)
+        duration_sec = getattr(process_stt_result, 'last_vad_audio_len', 0) / AUDIO_DOWNSAMPLE_RATE
+        log_callsign = actual_callsign_text if validate_callsign_format(actual_callsign_text) else 'Unknown'
+        log_signal_report(log_callsign, s_meter, snr, text_input, duration_sec, vad_trigger_threshold, uid=uid)
+        if text_lower.endswith(TRIGGER_PHRASE_END) and validate_callsign_format(actual_callsign_text):
+            if hasattr(process_stt_result, 'last_call_info') and \
+               process_stt_result.last_call_info['callsign'] == actual_callsign_text and \
+               (current_time - process_stt_result.last_call_info['time']) < 10:
+                print(f"Callsign {actual_callsign_text} processed recently. Skipping response.")
             else:
-                actual_callsign_text = convert_nato_to_text(nato_callsign_words).upper()
-                if validate_callsign_format(actual_callsign_text):
-                    print(f"Valid callsign format: {actual_callsign_text}"); current_time = time.time()
-                    if hasattr(process_stt_result, 'last_call_info') and \
-                       process_stt_result.last_call_info['callsign'] == actual_callsign_text and \
-                       (current_time - process_stt_result.last_call_info['time']) < 10:
-                        print(f"Callsign {actual_callsign_text} processed recently. Skipping.")
-                    else:
-                        process_stt_result.last_call_info = {'callsign': actual_callsign_text, 'time': current_time}
-                        s_meter, snr = calculate_signal_metrics(iq_data_for_snr_list)
-                        # Calculate duration_sec from last VAD buffer if available
-                        duration_sec = getattr(process_stt_result, 'last_vad_audio_len', 0) / AUDIO_DOWNSAMPLE_RATE
-                        log_signal_report(actual_callsign_text, s_meter, snr, text_input, duration_sec, vad_trigger_threshold, uid=uid)
-                        response_text = f"{actual_callsign_text}, Your signal is {s_meter} with an SNR of {snr:.1f} dB."
-                        print(f"Response: {response_text}")
-                        speak_and_transmit(response_text)
-                else: print(f"Invalid callsign format for '{actual_callsign_text}'")
-        except Exception as e: print(f"Error processing command: {e}"); import traceback; traceback.print_exc()
+                process_stt_result.last_call_info = {'callsign': actual_callsign_text, 'time': current_time}
+                response_text = f"{actual_callsign_text}, Your signal is {s_meter} with an SNR of {snr:.1f} dB."
+                print(f"Response: {response_text}")
+                speak_and_transmit(response_text)
+        elif not validate_callsign_format(actual_callsign_text):
+            print(f"Invalid or missing callsign for '{actual_callsign_text}', logged as 'Unknown'.")
+    except Exception as e:
+        print(f"Error processing command: {e}"); import traceback; traceback.print_exc()
 
 if not hasattr(process_stt_result, 'last_call_info'):
     process_stt_result.last_call_info = {'callsign':"", 'time':0}
@@ -475,10 +475,10 @@ def audio_processing_thread_func():
                             plt.savefig(spec_path, bbox_inches='tight')
                             plt.close()
                             print(f"Saved spectrogram to {spec_path}")
-                        if recognized_text_segment:
-                            # Save VAD buffer length for duration calculation
-                            process_stt_result.last_vad_audio_len = len(vad_audio_buffer)
-                            process_stt_result(recognized_text_segment, list(vad_iq_buffer), uid=capture_uid, vad_trigger_threshold=dynamic_rf_vad_trigger_threshold)
+                        # Always log the VAD event, even if no recognized text or callsign
+                        process_stt_result.last_vad_audio_len = len(vad_audio_buffer)
+                        # Use recognized_text_segment if available, else empty string
+                        process_stt_result(recognized_text_segment or '', list(vad_iq_buffer), uid=capture_uid, vad_trigger_threshold=dynamic_rf_vad_trigger_threshold)
                     vad_audio_buffer = np.array([], dtype=np.float32); vad_iq_buffer.clear()
                     is_capturing_speech_rf = False; rf_silence_chunk_counter = 0
                     if vosk_recognizer_instance: vosk_recognizer_instance.Reset()
