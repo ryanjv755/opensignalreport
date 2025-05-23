@@ -15,6 +15,8 @@ import csv
 from scipy.io import wavfile
 import uuid
 import matplotlib.pyplot as plt  # At the top of your script
+import warnings
+warnings.filterwarnings("ignore", message="Starting a Matplotlib GUI outside of the main thread will likely fail.")
 
 # --- Set Vosk Log Level ---
 # Set before initializing any Vosk objects to reduce startup verbosity
@@ -25,7 +27,7 @@ SetLogLevel(1) # Only show warnings and errors from Vosk
 SDR_CENTER_FREQ = 145.570e6
 SDR_SAMPLE_RATE = 1.024e6
 SDR_GAIN = 6
-SDR_NUM_SAMPLES_PER_CHUNK = 16384
+SDR_OFFSET_TUNING = True  # <--- Add this line
 
 # VAD Wav output directory and spectrogram save option
 VAD_WAV_OUTPUT_DIR = "wavs"
@@ -41,6 +43,7 @@ RF_VAD_STD_MULTIPLIER = .2
 VAD_SPEECH_CAPTURE_SECONDS = 10.0
 VAD_MAX_SPEECH_SAMPLES = int(VAD_SPEECH_CAPTURE_SECONDS * AUDIO_DOWNSAMPLE_RATE)
 VAD_MIN_SPEECH_SAMPLES = int(0.75 * AUDIO_DOWNSAMPLE_RATE)
+SDR_NUM_SAMPLES_PER_CHUNK = 16384  # Or another reasonable chunk size for your SDR and processing
 SMALL_AUDIO_CHUNK_SAMPLES = int(SDR_NUM_SAMPLES_PER_CHUNK / (SDR_SAMPLE_RATE / AUDIO_DOWNSAMPLE_RATE))
 SMALL_AUDIO_CHUNK_DURATION = SMALL_AUDIO_CHUNK_SAMPLES / AUDIO_DOWNSAMPLE_RATE if AUDIO_DOWNSAMPLE_RATE > 0 else 0.016
 RF_VAD_SILENCE_TO_END_SECONDS = 1.0
@@ -391,6 +394,7 @@ def audio_processing_thread_func():
 
                         # 3. If SAVE_SPECTROGRAM, generate and save spectrogram from unfiltered_audio_segment
                         if SAVE_SPECTROGRAM:
+                            os.makedirs(VAD_WAV_OUTPUT_DIR, exist_ok=True)  # Ensure output directory exists
                             plot_time = time.strftime("%Y-%m-%d %H:%M:%S")
                             plt.figure(figsize=(8, 4))
                             plt.specgram(unfiltered_audio_segment, NFFT=256, Fs=AUDIO_DOWNSAMPLE_RATE, noverlap=128, cmap='viridis')
@@ -493,8 +497,12 @@ if __name__ == "__main__":
         print("Initializing SDR..."); sdr = RtlSdr()
         sdr.center_freq = SDR_CENTER_FREQ 
         sdr.sample_rate = SDR_SAMPLE_RATE; sdr.gain = SDR_GAIN
-        print(f"SDR Configured: Freq={sdr.center_freq/1e6:.3f}MHz, Rate={sdr.sample_rate/1e6:.3f}Msps, Gain={sdr.get_gain()}dB")
-        
+
+        # Enable offset tuning to avoid DC spike at center frequency
+        sdr.offset_tuning = SDR_OFFSET_TUNING
+
+        print(f"SDR Configured: Freq={sdr.center_freq/1e6:.3f}MHz, Rate={sdr.sample_rate/1e6:.3f}Msps, Gain={sdr.get_gain()}dB, OffsetTuning={sdr.offset_tuning}")
+
         audio_thread = threading.Thread(target=audio_processing_thread_func, daemon=True); audio_thread.start()
         input_thread = threading.Thread(target=input_monitor_thread_func, daemon=True); input_thread.start()
         
