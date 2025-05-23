@@ -91,13 +91,6 @@ All settings are in `config.json` and editable via the web UI:
 
 ---
 
-## Advanced
-- **Migration:** Use `migrate_csv_to_sqlite.py` to import old CSV logs.
-- **Manual Control:** You can run `sigrep.py` directly for CLI-only operation.
-- **Customization:** Extend templates/static files for custom UI/UX.
-
----
-
 ## Disclaimer
 This software is for experimental and educational use. Operate in accordance with your amateur radio license and local regulations. You are responsible for all transmissions.
 
