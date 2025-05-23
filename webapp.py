@@ -300,11 +300,16 @@ def config():
             vosk_path = request.form['VOSK_MODEL_PATH']
             if not vosk_path or len(vosk_path) > 256:
                 raise ValueError('Vosk Model Path must be non-empty and less than 256 characters.')
+            # S9 dBFS reference
+            s9_dbfs_ref = float(request.form['S9_DBFS_REF'])
+            if not (-200 <= s9_dbfs_ref <= 0):
+                raise ValueError('S9 dBFS reference must be between -200 and 0 dBFS.')
             # Save validated values
             cfg['SDR_CENTER_FREQ'] = center_freq
             cfg['SDR_SAMPLE_RATE'] = sample_rate
             cfg['SDR_GAIN'] = gain
             cfg['SDR_OFFSET_TUNING'] = request.form.get('SDR_OFFSET_TUNING') == 'on'
+            cfg['S9_DBFS_REF'] = s9_dbfs_ref
             cfg['BASELINE_DURATION_SECONDS'] = baseline
             cfg['RF_VAD_STD_MULTIPLIER'] = vad_std
             cfg['VAD_SPEECH_CAPTURE_SECONDS'] = vad_capture
@@ -331,6 +336,7 @@ def config():
         center_freq_display = f"{center_freq_val / 1e6:.3f}"
     else:
         center_freq_display = str(center_freq_val)
+    s9_dbfs_val = cfg.get('S9_DBFS_REF', -62)
     html = NAVBAR + GLOBAL_STYLE + f'''
     <div class="main-container">
     <h1>Configuration</h1>
@@ -343,6 +349,7 @@ def config():
         <label style="color:var(--fg,#222);">Sample Rate (Hz):<br><input name="SDR_SAMPLE_RATE" type="number" value="{cfg['SDR_SAMPLE_RATE']}" step="1" style="width:100%"></label><br>
         <label style="color:var(--fg,#222);">Gain (dB):<br><input name="SDR_GAIN" type="number" value="{cfg['SDR_GAIN']}" step="1" style="width:100%"></label><br>
         <label style="color:var(--fg,#222);">Offset Tuning: <input name="SDR_OFFSET_TUNING" type="checkbox" {checked_offset}></label>
+        <label style="color:var(--fg,#222);">S9 dBFS Reference:<br><input name="S9_DBFS_REF" type="number" value="{s9_dbfs_val}" step="0.1" min="-200" max="0" style="width:100%"></label><br>
       </fieldset>
       <fieldset style="margin-bottom:18px;padding:10px 15px;border-radius:6px;border:1px solid var(--border,#bbb);background:var(--table,#fff);">
         <legend style="font-weight:bold;color:var(--fg,#222);">VAD & Audio Processing</legend>
