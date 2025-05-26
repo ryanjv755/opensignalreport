@@ -443,11 +443,28 @@ def audio_processing_thread_func():
                     process_this_rf_segment = True
 
                 if process_this_rf_segment:
+                    recognized_text_segment = None
                     if len(vad_audio_buffer) >= VAD_MIN_SPEECH_SAMPLES:
                         print(f"Processing captured segment (RF VAD): {len(vad_audio_buffer)/AUDIO_DOWNSAMPLE_RATE:.2f}s audio (with {len(vad_iq_buffer)} IQ chunks).")
-                        # ...existing code for saving, plotting, and STT...
+                        # ...existing code for saving, plotting, etc...
+
+                        # --- STT Recognition ---
+                        if vosk_recognizer_instance:
+                            audio_data_int16 = (vad_audio_buffer * 32767).astype(np.int16)
+                            audio_bytes = audio_data_int16.tobytes()
+                            vosk_recognizer_instance.Reset()
+                            if vosk_recognizer_instance.AcceptWaveform(audio_bytes):
+                                result = json.loads(vosk_recognizer_instance.Result())
+                                recognized_text_segment = result.get('text', '')
+                            else:
+                                final_result_json = json.loads(vosk_recognizer_instance.FinalResult())
+                                recognized_text_segment = final_result_json.get('text', '')
+                            print(f"STT recognized: '{recognized_text_segment}'")
+                        else:
+                            print("STT: Recognizer not available.")
+
                         process_stt_result.last_vad_audio_len = len(vad_audio_buffer)
-                        process_stt_result('', list(vad_iq_buffer), vad_trigger_threshold=dynamic_rf_vad_trigger_threshold)
+                        process_stt_result(recognized_text_segment or '', list(vad_iq_buffer), vad_trigger_threshold=dynamic_rf_vad_trigger_threshold)
                     vad_audio_buffer = np.array([], dtype=np.float32)
                     vad_iq_buffer.clear()
                     is_capturing_speech_rf = False
@@ -542,10 +559,10 @@ DTMF_FREQS = {
     'high': [1209, 1336, 1477, 1633]
 }
 DTMF_MAP = {
-    (697, 1209): '1', (697, 1336): '2', (697, 1477): '3', (697, 1633): 'A',
-    (770, 1209): '4', (770, 1336): '5', (770, 1477): '6', (770, 1633): 'B',
-    (852, 1209): '7', (852, 1336): '8', (852, 1477): '9', (852, 1633): 'C',
-    (941, 1209): '*', (941, 1336): '0', (941, 1477): '#', (941, 1633): 'D'
+    (697, 1209): '1', (697, 1336): '2', (697, 1477): '3',
+    (770, 1209): '4', (770, 1336): '5', (770, 1477): '6',
+    (852, 1209): '7', (852, 1336): '8', (852, 1477): '9',
+    (941, 1209): '*', (941, 1336): '0', (941, 1477): '#'
 }
 DTMF_DEBOUNCE_TIME = 0.35  # seconds, adjust as needed
 
