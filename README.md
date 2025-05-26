@@ -97,12 +97,5 @@ This software is for experimental and educational use. Operate in accordance wit
 
 ---
 
-## Credits
-- SDR: [pyrtlsdr](https://github.com/roger-/pyrtlsdr)
-- STT: [Vosk](https://alphacephei.com/vosk/)
-- UI: Flask, Jinja2, Bootstrap-inspired CSS
-
----
-
 ## License
 MIT License. See `LICENSE` file.
