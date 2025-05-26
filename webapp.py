@@ -183,18 +183,28 @@ def run_status():
                 action = 'start'
             elif 'stop' in request.form:
                 action = 'stop'
+            elif 'restart' in request.form:
+                action = 'restart'
             with open('sigrep_webapp_launch.log', 'a') as logf:
                 logf.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] /run POST action: {action}\n")
             print(f"/run POST action: {action}")
             if action == 'start':
                 result = start_sigrep()
                 if result:
-                    message = 'Started sigrep.'
+                    message = 'Started SignalReport.'
                 else:
-                    error = 'Failed to start sigrep. See sigrep_webapp_launch.log.'
+                    error = 'Failed to start SignalReport. See sigrep_webapp_launch.log.'
             elif action == 'stop':
                 stop_sigrep()
-                message = 'Stopped sigrep.'
+                message = 'Stopped SignalReport.'
+            elif action == 'restart':
+                stop_sigrep()
+                time.sleep(1)
+                result = start_sigrep()
+                if result:
+                    message = 'Restarted SignalReport.'
+                else:
+                    error = 'Failed to restart SignalReport. See sigrep_webapp_launch.log.'
         except Exception as e:
             error = str(e)
             with open('sigrep_webapp_launch.log', 'a') as logf:
@@ -234,7 +244,9 @@ def run_status():
         uptime_str=uptime_str,
         last_started_fmt=last_started_fmt,
         message=message,
-        error=error
+        error=error,
+        running=running,
+        status=status
     )
 
 @app.route('/run_status_json')
@@ -381,17 +393,19 @@ def config():
 @app.route('/logs')
 def logs():
     reports = get_all_signal_reports()
-    # Attach wav and png URLs for each report
+    # Show all reports, including those with 'Unknown' callsign
     report_rows = []
     for r in reports:
         uid = r[0]
+        callsign = r[1] if len(r) > 1 else ''
+        # Optionally, highlight or mark 'Unknown' callsigns in the UI
         wav_files = glob.glob(f'wavs/vad_capture_*_{uid}*.wav')
         wav_url = f'/wavs/{os.path.basename(wav_files[0])}' if wav_files else ''
         png_files = glob.glob(f'wavs/vad_capture_*_{uid}*.png')
         png_url = f'/spectrogram/{os.path.basename(png_files[0])}' if png_files else ''
         png_thumb = f'/wavs/{os.path.basename(png_files[0])}' if png_files else ''
-        # Add extra fields for template
         report_rows.append(list(r) + [wav_url, png_url, png_thumb])
+    # No filtering: all entries, including 'Unknown', are shown
     return render_template('logs.html', navbar=NAVBAR, title='Logs', reports=report_rows)
 
 @app.route('/spectrogram/<filename>')

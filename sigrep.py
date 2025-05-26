@@ -333,6 +333,7 @@ def process_stt_result(text_input, iq_data_for_snr_list, uid=None, vad_trigger_t
             else:
                 process_stt_result.last_call_info = {'callsign': actual_callsign_text, 'time': current_time}
                 response_text = f"{actual_callsign_text}, your signal is {s_meter}, SNR {int(round(snr))} dB."
+
                 print(f"Response: {response_text}")
                 speak_and_transmit(response_text)
         elif not validate_callsign_format(actual_callsign_text):
@@ -536,7 +537,7 @@ if __name__ == "__main__":
     if vosk_model: print(f"Vosk model loaded: {VOSK_MODEL_PATH}")
     else: print("WARNING: Vosk model not loaded.")
     
-    print(f"Radio Signal Reporter started: {time.ctime()}")
+    print(f"Signal Reporter started: {time.ctime()}")
 
     try:
         print("Initializing SDR..."); sdr = RtlSdr()
