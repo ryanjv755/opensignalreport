@@ -11,8 +11,80 @@
   <td>{{ r[5] }}</td>
   <td>{{ r[7] }}</td>
   <td>{% if r[8] %}<audio controls style="width:120px;"><source src="{{ r[8] }}" type="audio/wav">Your browser does not support the audio element.</audio>{% endif %}</td>
-  <td>{% if r[9] %}<a href="{{ r[9] }}" target="_blank"><img src="{{ r[10] }}" alt="Spectrogram" style="max-width:220px;max-height:120px;display:block;margin:0 auto;"></a>{% endif %}</td>
+  <td>
+    {% if r[9] %}
+      <img src="{{ r[10] }}" alt="Spectrogram"
+           class="spectrogram-thumb"
+           style="max-width:220px;max-height:120px;display:block;margin:0 auto;cursor:pointer;"
+           data-fullsrc="{{ r[10] }}">
+    {% endif %}
+  </td>
 </tr>
 {% endfor %}
 </table></div>
+
+<div id="spectrogramModal" class="modal" style="display:none;">
+  <span class="modal-close" id="modalCloseBtn">&times;</span>
+  <img class="modal-content" id="modalImg" src="" alt="Spectrogram" />
+</div>
+
+<style>
+.modal {
+  display: none;
+  position: fixed;
+  z-index: 1000;
+  left: 0;
+  top: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: auto;
+  background-color: rgba(0,0,0,0.85);
+}
+.modal-content {
+  display: block;
+  margin: 40px auto;
+  max-width: 90vw;
+  max-height: 80vh;
+  box-shadow: 0 0 16px #000;
+  border-radius: 6px;
+}
+.modal-close {
+  position: absolute;
+  top: 16px;
+  right: 32px;
+  color: #fff;
+  font-size: 2.5em;
+  font-weight: bold;
+  cursor: pointer;
+  z-index: 1001;
+  text-shadow: 0 0 8px #000;
+}
+.spectrogram-thumb:hover {
+  outline: 2px solid #4af;
+}
+</style>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  const modal = document.getElementById('spectrogramModal');
+  const modalImg = document.getElementById('modalImg');
+  const closeBtn = document.getElementById('modalCloseBtn');
+  document.querySelectorAll('.spectrogram-thumb').forEach(function(img) {
+    img.addEventListener('click', function() {
+      modal.style.display = 'block';
+      modalImg.src = img.getAttribute('data-fullsrc');
+    });
+  });
+  closeBtn.onclick = function() {
+    modal.style.display = 'none';
+    modalImg.src = '';
+  };
+  modal.onclick = function(e) {
+    if (e.target === modal) {
+      modal.style.display = 'none';
+      modalImg.src = '';
+    }
+  };
+});
+</script>
 {% endblock %}
