@@ -21,8 +21,9 @@ OpenSignalReport is a modern, self-hosted signal reporting system for amateur ra
    ```bash
    pip install -r requirements.txt
    ```
-2. **Download a Vosk model:**
+2. **Download the large Vosk model:**
    - [Vosk Models Page](https://alphacephei.com/vosk/models)
+   - At time of writing, `vosk-model-en-us-0.22-lgraph` is what was working while testing.
    - Extract and set the path in `config.json`.
 3. **Configure:**
    - Edit `config.json` or use the web UI `/config` page.
