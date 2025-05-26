@@ -186,3 +186,4 @@ wavs/
 signal_reports.db
 sigrep_webapp_launch.log
 sigrep_status.json
+tts_output.wav
