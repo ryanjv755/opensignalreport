@@ -11,12 +11,20 @@
   <td>{{ r[5] }}</td>
   <td>{{ r[7] }}</td>
   <td>{% if r[8] %}<audio controls style="width:120px;"><source src="{{ r[8] }}" type="audio/wav">Your browser does not support the audio element.</audio>{% endif %}</td>
-  <td>{% if r[9] %}<img src="{{ r[10] }}" alt="Spectrogram" class="spectrogram-thumb" style="max-width:220px;max-height:120px;display:block;margin:0 auto;cursor:pointer;" data-fullsrc="{{ r[10] }}">{% endif %}</td>
+  <td>
+    {% if r[9] %}
+      <img src="{{ r[10] }}" alt="Spectrogram"
+           class="spectrogram-thumb"
+           style="max-width:220px;max-height:120px;display:block;margin:0 auto;cursor:pointer;"
+           data-fullsrc="{{ r[10] }}">
+    {% endif %}
+  </td>
+
 </tr>
 {% endfor %}
 </table></div>
 
-<!-- Spectrogram Overlay Modal -->
+
 <div id="spectrogramModal" class="modal" style="display:none;">
   <span class="modal-close" id="modalCloseBtn">&times;</span>
   <img class="modal-content" id="modalImg" src="" alt="Spectrogram" />

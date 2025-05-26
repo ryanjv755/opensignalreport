@@ -35,7 +35,7 @@ SDR_CENTER_FREQ = float(cfg.get('SDR_CENTER_FREQ', 145570000))
 if SDR_CENTER_FREQ < 1e6:  # If user entered in MHz (e.g. 145.570)
     SDR_CENTER_FREQ = SDR_CENTER_FREQ * 1e6
 SDR_SAMPLE_RATE = float(cfg.get('SDR_SAMPLE_RATE', 1024000))
-SDR_GAIN = int(cfg.get('SDR_GAIN', 6))
+SDR_GAIN = int(cfg.get('SDR_GAIN', 0))
 SDR_OFFSET_TUNING = bool(cfg.get('SDR_OFFSET_TUNING', True))
 
 # VAD Wav output directory and spectrogram save option
@@ -48,7 +48,7 @@ AUDIO_DOWNSAMPLE_RATE = 16000
 STT_ENGINE = "vosk"
 VOSK_MODEL_PATH = "vosk-model-en-us-0.22-lgraph"
 BASELINE_DURATION_SECONDS = 10
-RF_VAD_STD_MULTIPLIER = .2
+RF_VAD_STD_MULTIPLIER = 1.5
 VAD_SPEECH_CAPTURE_SECONDS = 10.0
 VAD_MAX_SPEECH_SAMPLES = int(VAD_SPEECH_CAPTURE_SECONDS * AUDIO_DOWNSAMPLE_RATE)
 VAD_MIN_SPEECH_SAMPLES = int(0.75 * AUDIO_DOWNSAMPLE_RATE)
@@ -123,94 +123,114 @@ ensure_table_exists()
 
 def speak_and_transmit(text_to_speak):
     """Speaks text using OS-level TTS commands via subprocess."""
-    print(f"TTS (subprocess): Attempting to speak: '{text_to_speak}'")
     current_os = platform.system().lower()
     cmd = []
     success = False
     command_executed = False
-    # subprocess_kwargs for stdout and stderr handling
     subprocess_kwargs = {
         'text': True,
-        'check': False, # We check returncode manually
-        'timeout': 20   # 20s timeout for speech
+        'check': False,
+        'timeout': 20
     }
 
     try:
         if "windows" in current_os:
-            escaped_text = text_to_speak.replace("'", "''") # Basic escape for PowerShell single quotes
+            escaped_text = text_to_speak.replace("'", "''")
+            tts_wav_path = "tts_output.wav"
             ps_script = (
                 f"Add-Type -AssemblyName System.Speech; "
                 f"$speak = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+                f"$speak.SetOutputToWaveFile('{tts_wav_path}'); "
                 f"$speak.Rate = 0; "
                 f"$speak.Speak('{escaped_text}');"
             )
             import base64
             encoded_ps_command = base64.b64encode(ps_script.encode('utf-16-le')).decode('ascii')
             cmd = ['powershell',
-                   '-NoProfile',         # Don't load profile
-                   '-NonInteractive',    # Run non-interactively
+                   '-NoProfile',
+                   '-NonInteractive',
                    '-ExecutionPolicy', 'Bypass',
                    '-EncodedCommand', encoded_ps_command]
-            
-            # For Windows, redirect PowerShell's stdout to DEVNULL to suppress execution policy messages etc.
-            # Still capture stderr to see actual errors from the speech script.
             subprocess_kwargs['stdout'] = subprocess.DEVNULL
             subprocess_kwargs['stderr'] = subprocess.PIPE
 
-        elif "darwin" in current_os: # macOS
+        elif "darwin" in current_os:
             cmd = ['say', '-r', '180', '--', text_to_speak]
-            # For macOS and Linux, capture both stdout and stderr for debugging on error
             subprocess_kwargs['capture_output'] = True
         elif "linux" in current_os:
             try:
                 subprocess.run(['spd-say', '--version'], capture_output=True, text=True, check=True, timeout=2)
                 cmd = ['spd-say', '-r', '-10', '-w', '--', text_to_speak]
             except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
-                print("TTS (subprocess): spd-say not found or failed, trying espeak...")
                 try:
                     subprocess.run(['espeak', '--version'], capture_output=True, text=True, check=True, timeout=2)
-                    cmd = ['espeak', '-s', '150', '--', text_to_speak]
+                    tts_wav_path = "tts_output.wav"
+                    cmd = ['espeak', '-s', '150', '-w', tts_wav_path, '--', text_to_speak]
                 except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
-                    print("TTS (subprocess) ERROR: Neither spd-say nor espeak found/working. Cannot speak.")
+                    print("TTS ERROR: Neither spd-say nor espeak found/working.")
                     return
-            # For macOS and Linux, capture both stdout and stderr for debugging on error
             subprocess_kwargs['capture_output'] = True
         else:
-            print(f"TTS (subprocess) ERROR: Unsupported OS for TTS: {current_os}")
+            print(f"TTS ERROR: Unsupported OS for TTS: {current_os}")
             return
 
         if cmd:
-            print(f"TTS (subprocess): Executing: {' '.join(map(shlex.quote, cmd))}")
             process_result = subprocess.run(cmd, **subprocess_kwargs)
             command_executed = True
             if process_result.returncode == 0:
-                print(f"TTS (subprocess): Speech command successful for: '{text_to_speak}'")
                 success = True
             else:
-                print(f"TTS (subprocess) ERROR: Command failed with code {process_result.returncode}")
-                # process_result.stderr will be None if stderr was not piped (e.g. if changed for DEVNULL too)
-                # With current kwargs, stderr IS piped for Windows, and capture_output=True pipes both for others.
+                print(f"TTS ERROR: Command failed (code {process_result.returncode})")
                 if process_result.stderr:
-                    print(f"TTS (subprocess) stderr: {process_result.stderr.strip()}")
-                # Only print stdout if it was captured (i.e., not for Windows in this setup if it went to DEVNULL)
-                if hasattr(process_result, 'stdout') and process_result.stdout: 
-                    print(f"TTS (subprocess) stdout (on error): {process_result.stdout.strip()}")
-    
+                    print(f"TTS stderr: {process_result.stderr.strip()}")
+                if hasattr(process_result, 'stdout') and process_result.stdout:
+                    print(f"TTS stdout (on error): {process_result.stdout.strip()}")
+
     except subprocess.TimeoutExpired:
-        print(f"TTS (subprocess) ERROR: Speech command timed out for: '{text_to_speak}'")
+        print(f"TTS ERROR: Speech command timed out.")
     except FileNotFoundError:
         missing_cmd = cmd[0] if cmd else "TTS executable"
-        print(f"TTS (subprocess) ERROR: {missing_cmd} not found. Please ensure it's installed and in PATH.")
+        print(f"TTS ERROR: {missing_cmd} not found. Please ensure it's installed and in PATH.")
     except Exception as e:
-        print(f"TTS (subprocess) ERROR: An unexpected error occurred during speech: {e}")
+        print(f"TTS ERROR: An unexpected error occurred during speech: {e}")
         import traceback
         traceback.print_exc()
 
-    if command_executed and success:
-        print(f"Transmission complete (via OS command for: '{text_to_speak}')")
-    elif command_executed and not success:
-        print(f"Transmission failed or had errors (via OS command for: '{text_to_speak}')")
+    # Mix tone and play WAV as before (if using WAV output)
+    from scipy.io import wavfile
 
+    # Read the TTS WAV
+    rate, data = wavfile.read(tts_wav_path)
+    if data.dtype != np.float32:
+        data = data.astype(np.float32) / 32767.0  # Convert to float32 if needed
+
+    # Mix in the tone
+    data_with_tone = mix_ultrasonic_tone(data, rate)
+
+    # Convert back to int16 and save
+    wavfile.write(tts_wav_path, rate, (data_with_tone * 32767).astype(np.int16))
+
+    import sys
+
+    # Play the WAV file (blocking)
+    if "windows" in current_os:
+        play_cmd = [
+            "powershell",
+            "-c",
+            f"(New-Object Media.SoundPlayer '{tts_wav_path}').PlaySync();"
+        ]
+        subprocess.run(play_cmd)
+    elif "darwin" in current_os:
+        subprocess.run(["afplay", tts_wav_path])
+    elif "linux" in current_os:
+        try:
+            subprocess.run(["aplay", tts_wav_path])
+        except FileNotFoundError:
+            subprocess.run(["paplay", tts_wav_path])
+    else:
+        print("No supported audio playback method for this OS.")
+
+    print(f"Transmitted: '{text_to_speak}'")
 
 def sdr_callback(samples, sdr_instance):
     try:
@@ -259,17 +279,19 @@ def calculate_signal_metrics(iq_samples_list):
             return "S0", 0.0
         signal_plus_noise_dbfs = 10 * np.log10(signal_plus_noise_power)
 
-        # Use 20% of the segment for noise estimation if possible
+        # Robust noise estimation: use median of first and last 10%
         n = len(full_iq_segment)
-        edge = max(1, n // 5)
+        edge = max(1, n // 10)
         noise_samples = np.concatenate([full_iq_segment[:edge], full_iq_segment[-edge:]])
-        # Optionally, use median to reduce outlier impact
         noise_power = np.median(np.abs(noise_samples)**2)
         if noise_power < 1e-12:
-            noise_power = 1e-12
+            noise_power = 1e-12  # avoid log(0)
         noise_dbfs = 10 * np.log10(noise_power)
 
-        snr_db = max(0.0, signal_plus_noise_dbfs - noise_dbfs)
+        # Optionally, subtract noise from signal+noise for SNR
+        snr_linear = (signal_plus_noise_power - noise_power) / noise_power
+        snr_db = 10 * np.log10(max(snr_linear, 1e-12))
+        snr_db = max(0.0, snr_db)
 
         s_meter_reading = estimate_s_meter(signal_plus_noise_dbfs)
         return s_meter_reading, snr_db
@@ -310,7 +332,8 @@ def process_stt_result(text_input, iq_data_for_snr_list, uid=None, vad_trigger_t
                 print(f"Callsign {actual_callsign_text} processed recently. Skipping response.")
             else:
                 process_stt_result.last_call_info = {'callsign': actual_callsign_text, 'time': current_time}
-                response_text = f"{actual_callsign_text}, Your signal is {s_meter} with an SNR of {snr:.1f} dB."
+                response_text = f"{actual_callsign_text}, your signal is {s_meter}, SNR {int(round(snr))} dB."
+
                 print(f"Response: {response_text}")
                 speak_and_transmit(response_text)
         elif not validate_callsign_format(actual_callsign_text):
@@ -502,6 +525,11 @@ def input_monitor_thread_func():
                 print("Exiting script."); os._exit(0)
         except EOFError: print("EOF on input, exiting."); os._exit(0)
         except Exception as e: print(f"Input monitor error: {e}, exiting."); os._exit(0)
+
+def mix_ultrasonic_tone(audio, sample_rate, tone_freq=18000, tone_level=0.01):
+    t = np.arange(len(audio)) / sample_rate
+    tone = tone_level * np.sin(2 * np.pi * tone_freq * t)
+    return audio + tone
 
 if __name__ == "__main__":
     sdr = None; audio_thread = None; input_thread = None
