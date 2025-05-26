@@ -9,11 +9,11 @@
 </form>
 <div id="status-block" style="margin-bottom:18px;">
   {% if running and status['state'] == 'ready' %}
-    <span style="color: #1dbf1d; font-weight: bold;">SignalReport is running and ready.</span>
+    <span style="color: #1dbf1d; font-weight: bold;">SigRep is running and ready.</span>
   {% elif running %}
-    <span style="color: #1dbf1d; font-weight: bold;">SignalReport is running.</span>
+    <span style="color: #1dbf1d; font-weight: bold;">SigRep is running.</span>
   {% else %}
-    <span style="color: #d32f2f; font-weight: bold;">SignalReport is stopped.</span>
+    <span style="color: #d32f2f; font-weight: bold;">SigRep is stopped.</span>
   {% endif %}
   {% if message %}
     <div class="msg" style="color:green;">{{ message }}</div>
