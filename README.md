@@ -32,9 +32,7 @@ OpenSignalReport is a modern, self-hosted signal reporting system for amateur ra
    python webapp.py
    ```
    - Open `http://localhost:5000` in your browser.
-5. **Connect hardware:**
-   - SDR dongle, antenna, and (optional) APRS-K1 PRO cable to your analog radio.
-6. **Start SDR:**
+6. **Start OpenSignalReporter:**
    - Use the web UI **Run** page to start/stop the SDR and view live status.
 
 ---
@@ -94,13 +92,6 @@ All settings are in `config.json` and editable via the web UI:
 
 ## Disclaimer
 This software is for experimental and educational use. Operate in accordance with your amateur radio license and local regulations. You are responsible for all transmissions.
-
----
-
-## Credits
-- SDR: [pyrtlsdr](https://github.com/roger-/pyrtlsdr)
-- STT: [Vosk](https://alphacephei.com/vosk/)
-- UI: Flask, Jinja2, Bootstrap-inspired CSS
 
 ---
 
