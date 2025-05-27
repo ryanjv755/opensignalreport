@@ -446,11 +446,29 @@ def audio_processing_thread_func():
                     recognized_text_segment = None
                     if len(vad_audio_buffer) >= VAD_MIN_SPEECH_SAMPLES:
                         print(f"Processing captured segment (RF VAD): {len(vad_audio_buffer)/AUDIO_DOWNSAMPLE_RATE:.2f}s audio (with {len(vad_iq_buffer)} IQ chunks).")
-                        # ...existing code for saving, plotting, etc...
+
+                        # --- Save WAV ---
+                        os.makedirs(VAD_WAV_OUTPUT_DIR, exist_ok=True)
+                        capture_uid = uuid.uuid4().hex[:16]
+                        wav_filename = f"vad_capture_{time.strftime('%Y%m%d_%H%M%S')}_{capture_uid}.wav"
+                        wav_path = os.path.join(VAD_WAV_OUTPUT_DIR, wav_filename)
+                        audio_data_int16 = (vad_audio_buffer * 32767).astype(np.int16)
+                        wavfile.write(wav_path, AUDIO_DOWNSAMPLE_RATE, audio_data_int16)
+
+                        # --- Save Spectrogram ---
+                        spec_filename = wav_filename.replace('.wav', '.png')
+                        spec_path = os.path.join(VAD_WAV_OUTPUT_DIR, spec_filename)
+                        plt.figure(figsize=(8, 4))
+                        plt.specgram(vad_audio_buffer, NFFT=256, Fs=AUDIO_DOWNSAMPLE_RATE, noverlap=128, cmap='viridis')
+                        plt.title(f"Spectrogram {capture_uid}")
+                        plt.xlabel("Time (s)")
+                        plt.ylabel("Frequency (Hz)")
+                        plt.colorbar(label="Intensity (dB)")
+                        plt.savefig(spec_path, bbox_inches='tight')
+                        plt.close()
 
                         # --- STT Recognition ---
                         if vosk_recognizer_instance:
-                            audio_data_int16 = (vad_audio_buffer * 32767).astype(np.int16)
                             audio_bytes = audio_data_int16.tobytes()
                             vosk_recognizer_instance.Reset()
                             if vosk_recognizer_instance.AcceptWaveform(audio_bytes):
@@ -463,8 +481,14 @@ def audio_processing_thread_func():
                         else:
                             print("STT: Recognizer not available.")
 
+                        # --- Log the signal report (make sure you pass the file paths!) ---
                         process_stt_result.last_vad_audio_len = len(vad_audio_buffer)
-                        process_stt_result(recognized_text_segment or '', list(vad_iq_buffer), vad_trigger_threshold=dynamic_rf_vad_trigger_threshold)
+                        process_stt_result(
+                            recognized_text_segment or '',
+                            list(vad_iq_buffer),
+                            uid=capture_uid,
+                            vad_trigger_threshold=dynamic_rf_vad_trigger_threshold
+                        )
                     vad_audio_buffer = np.array([], dtype=np.float32)
                     vad_iq_buffer.clear()
                     is_capturing_speech_rf = False
