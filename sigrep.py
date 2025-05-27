@@ -18,6 +18,9 @@ import warnings
 import sqlite3  # Add for SQLite logging
 warnings.filterwarnings("ignore", message="Starting a Matplotlib GUI outside of the main thread will likely fail.")
 
+# Add at the top of your script
+baseline_noise_power = None
+
 # --- Set Vosk Log Level ---
 # Set before initializing any Vosk objects to reduce startup verbosity
 # Level 0 is default (verbose), 1 is warnings/errors, -1 is suppress all
@@ -268,6 +271,7 @@ def estimate_s_meter(power_dbfs):
     return closest_s_unit
 
 def calculate_signal_metrics(iq_samples_list):
+    global baseline_noise_power
     if not iq_samples_list:
         return "Unknown", 0.0
     try:
@@ -279,16 +283,18 @@ def calculate_signal_metrics(iq_samples_list):
             return "S0", 0.0
         signal_plus_noise_dbfs = 10 * np.log10(signal_plus_noise_power)
 
-        # Robust noise estimation: use median of first and last 10%
-        n = len(full_iq_segment)
-        edge = max(1, n // 10)
-        noise_samples = np.concatenate([full_iq_segment[:edge], full_iq_segment[-edge:]])
-        noise_power = np.median(np.abs(noise_samples)**2)
-        if noise_power < 1e-12:
-            noise_power = 1e-12  # avoid log(0)
-        noise_dbfs = 10 * np.log10(noise_power)
+        # Use baseline noise power if available, else fallback to old method
+        if baseline_noise_power and baseline_noise_power > 0:
+            noise_power = baseline_noise_power
+        else:
+            n = len(full_iq_segment)
+            edge = max(1, n // 10)
+            noise_samples = np.concatenate([full_iq_segment[:edge], full_iq_segment[-edge:]])
+            noise_power = np.median(np.abs(noise_samples)**2)
+            if noise_power < 1e-12:
+                noise_power = 1e-12  # avoid log(0)
 
-        # Optionally, subtract noise from signal+noise for SNR
+        noise_dbfs = 10 * np.log10(noise_power)
         snr_linear = (signal_plus_noise_power - noise_power) / noise_power
         snr_db = 10 * np.log10(max(snr_linear, 1e-12))
         snr_db = max(0.0, snr_db)
@@ -416,6 +422,7 @@ def audio_processing_thread_func():
                         if dynamic_rf_vad_trigger_threshold == 0 and avg_rf_noise == 0:
                             dynamic_rf_vad_trigger_threshold = 1e-9
                         print(f"--- RF Baselining complete. Threshold: {dynamic_rf_vad_trigger_threshold:.8f} ---")
+                        baseline_noise_power = avg_rf_noise  # avg_rf_noise is already mean(abs(iq)^2)
                     else:
                         print("Warning: No RF data for baselining. Using default.")
                         dynamic_rf_vad_trigger_threshold = 1e-7 
