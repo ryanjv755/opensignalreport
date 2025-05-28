@@ -25,18 +25,18 @@ def ensure_table_exists():
         conn.execute(SQLITE_TABLE_SCHEMA)
         conn.commit()
 
-def log_signal_report(callsign, s_meter, snr, recognized_text, duration_sec, vad_trigger_threshold, timestamp=None, uid=None):
+def log_signal_report(callsign, s_meter, snr, recognized_text, duration_sec, timestamp=None, uid=None):
     if timestamp is None:
-        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
     if uid is None:
         uid = uuid.uuid4().hex[:16]
     with get_sqlite_connection() as conn:
         conn.execute(
             """
-            INSERT OR REPLACE INTO signal_reports (uid, timestamp, callsign, s_meter, snr_db, duration_sec, vad_trigger_threshold, recognized_text)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO signal_reports (uid, timestamp, callsign, s_meter, snr_db, duration_sec, recognized_text)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (uid, timestamp, callsign, s_meter, snr, duration_sec, vad_trigger_threshold, recognized_text)
+            (uid, timestamp, callsign, s_meter, snr, duration_sec, recognized_text)
         )
         conn.commit()
 

@@ -20,6 +20,7 @@ warnings.filterwarnings("ignore", message="Starting a Matplotlib GUI outside of 
 
 # Add at the top of your script
 baseline_noise_power = None
+baseline_ctcss_powers = []
 
 # --- Set Vosk Log Level ---
 # Set before initializing any Vosk objects to reduce startup verbosity
@@ -34,6 +35,16 @@ def load_config():
 
 cfg = load_config()
 
+CTCSS_FREQ = float(cfg.get('CTCSS_FREQ', 100.0))
+ctcss_threshold_cfg = cfg.get('CTCSS_THRESHOLD', 750)
+if str(ctcss_threshold_cfg).lower() == 'auto':
+    CTCSS_THRESHOLD = None  # Will be set after baselining
+else:
+    CTCSS_THRESHOLD = float(ctcss_threshold_cfg)
+CTCSS_HOLDTIME = float(cfg.get('CTCSS_HOLDTIME', 0.7))  # seconds, adjust as needed
+MIN_TRANSMISSION_LENGTH = float(cfg.get('MIN_TRANSMISSION_LENGTH', 0.5))  # seconds, ignore very short segments
+AUDIO_WAV_OUTPUT_DIR = "wavs"
+
 SDR_CENTER_FREQ = float(cfg.get('SDR_CENTER_FREQ', 145570000))
 if SDR_CENTER_FREQ < 1e6:  # If user entered in MHz (e.g. 145.570)
     SDR_CENTER_FREQ = SDR_CENTER_FREQ * 1e6
@@ -43,26 +54,27 @@ SDR_OFFSET_TUNING = bool(cfg.get('SDR_OFFSET_TUNING', True))
 
 # VAD Wav output directory and spectrogram save option
 VAD_WAV_OUTPUT_DIR = "wavs"
-SAVE_SPECTROGRAM = True  # Toggle as needed
+SAVE_SPECTROGRAM = True  # or from config if you wish
 
-# VAD parameters
 NFM_FILTER_CUTOFF = 4000
 AUDIO_DOWNSAMPLE_RATE = 16000
 STT_ENGINE = "vosk"
 VOSK_MODEL_PATH = "vosk-model-en-us-0.22-lgraph"
 BASELINE_DURATION_SECONDS = 10
+SDR_NUM_SAMPLES_PER_CHUNK = 16384
+SMALL_AUDIO_CHUNK_SAMPLES = int(SDR_NUM_SAMPLES_PER_CHUNK / (SDR_SAMPLE_RATE / AUDIO_DOWNSAMPLE_RATE))
+SMALL_AUDIO_CHUNK_DURATION = SMALL_AUDIO_CHUNK_SAMPLES / AUDIO_DOWNSAMPLE_RATE if AUDIO_DOWNSAMPLE_RATE > 0 else 0.016
+
+is_baselining_rf = True
+baseline_rf_power_values = []
+
+# VAD parameters
 RF_VAD_STD_MULTIPLIER = 1.5
 VAD_SPEECH_CAPTURE_SECONDS = 10.0
 VAD_MAX_SPEECH_SAMPLES = int(VAD_SPEECH_CAPTURE_SECONDS * AUDIO_DOWNSAMPLE_RATE)
 VAD_MIN_SPEECH_SAMPLES = int(0.75 * AUDIO_DOWNSAMPLE_RATE)
-SDR_NUM_SAMPLES_PER_CHUNK = 16384  # Or another reasonable chunk size for your SDR and processing
-SMALL_AUDIO_CHUNK_SAMPLES = int(SDR_NUM_SAMPLES_PER_CHUNK / (SDR_SAMPLE_RATE / AUDIO_DOWNSAMPLE_RATE))
-SMALL_AUDIO_CHUNK_DURATION = SMALL_AUDIO_CHUNK_SAMPLES / AUDIO_DOWNSAMPLE_RATE if AUDIO_DOWNSAMPLE_RATE > 0 else 0.016
 RF_VAD_SILENCE_TO_END_SECONDS = 1.0
 RF_VAD_SILENCE_CHUNKS_FOR_END = int(RF_VAD_SILENCE_TO_END_SECONDS / SMALL_AUDIO_CHUNK_DURATION) if SMALL_AUDIO_CHUNK_DURATION > 0 else 60
-
-is_baselining_rf = True
-baseline_rf_power_values = []
 dynamic_rf_vad_trigger_threshold = 0.0
 
 TRIGGER_PHRASE_END = "signal report"
@@ -317,9 +329,8 @@ def validate_callsign_format(callsign_text):
     if not callsign_text: return False
     return bool(re.match(CALLSIGN_REGEX, callsign_text.upper()))
 
-def process_stt_result(text_input, iq_data_for_snr_list, uid=None, vad_trigger_threshold=None):
+def process_stt_result(text_input, iq_data_for_snr_list, uid=None):
     text_lower = text_input.lower(); print(f"STT recognized: '{text_input}'")
-    # Always log, even if callsign is invalid or missing
     try:
         words = text_lower.split(); nato_callsign_words = []
         for word in words:
@@ -328,9 +339,9 @@ def process_stt_result(text_input, iq_data_for_snr_list, uid=None, vad_trigger_t
         actual_callsign_text = convert_nato_to_text(nato_callsign_words).upper() if nato_callsign_words else ''
         current_time = time.time()
         s_meter, snr = calculate_signal_metrics(iq_data_for_snr_list)
-        duration_sec = getattr(process_stt_result, 'last_vad_audio_len', 0) / AUDIO_DOWNSAMPLE_RATE
+        duration_sec = getattr(process_stt_result, 'last_audio_len', 0) / AUDIO_DOWNSAMPLE_RATE
         log_callsign = actual_callsign_text if validate_callsign_format(actual_callsign_text) else 'Unknown'
-        log_signal_report(log_callsign, s_meter, snr, text_input, duration_sec, vad_trigger_threshold, uid=uid)
+        log_signal_report(log_callsign, s_meter, snr, text_input, duration_sec, uid=uid)
         if text_lower.endswith(TRIGGER_PHRASE_END) and validate_callsign_format(actual_callsign_text):
             if hasattr(process_stt_result, 'last_call_info') and \
                process_stt_result.last_call_info['callsign'] == actual_callsign_text and \
@@ -362,16 +373,17 @@ def write_status(state):
         json.dump(status, f)
 
 def audio_processing_thread_func():
-    global is_baselining_rf, baseline_rf_power_values, dynamic_rf_vad_trigger_threshold
+    global is_baselining_rf, baseline_rf_power_values
     global dtmf_last_digit, dtmf_last_time, dtmf_buffer
-    global parrot_mode, parrot_recording, parrot_audio, parrot_waiting_for_next_vad, parrot_ready_to_record
+    global parrot_mode, parrot_recording, parrot_audio, parrot_waiting_for_next_transmission, parrot_ready_to_record
 
     print("Audio processing thread started.")
     write_status('baselining')
-    vad_audio_buffer = np.array([], dtype=np.float32)
-    vad_iq_buffer = []
-    audio_processing_thread_func.was_capturing_speech_rf = is_capturing_speech_rf = False
-    rf_silence_chunk_counter = 0
+    audio_buffer = np.array([], dtype=np.float32)
+    iq_buffer = []
+    ctcss_buffer = np.array([], dtype=np.float32)
+    ctcss_active = False
+    last_ctcss_time = 0
     baselining_start_time = time.time()
     vosk_recognizer_instance = None
 
@@ -384,89 +396,119 @@ def audio_processing_thread_func():
             print(f"Error initializing Vosk KaldiRecognizer: {e}")
             vosk_recognizer_instance = None
 
+    # --- NEW: Baseline CTCSS Buffer ---
+    baseline_ctcss_buffer = np.array([], dtype=np.float32)
+    ctcss_consecutive_count = 0
+    CTCSS_CONSECUTIVE_REQUIRED = 3  # Tune as needed
+
     while True:
         try:
             audio_chunk_normalized, chunk_rf_power, iq_data_for_chunk = audio_iq_data_queue.get(timeout=0.1)
+            current_time = time.time()
 
-            # --- DTMF and Parrot Mode Activation ---
-            if is_capturing_speech_rf:
-                dtmf_chunk = (audio_chunk_normalized * 32767).astype(np.int16)
-                digit = detect_dtmf_digit(dtmf_chunk, AUDIO_DOWNSAMPLE_RATE)
+            dtmf_digit = detect_dtmf_digit(audio_chunk_normalized, AUDIO_DOWNSAMPLE_RATE)
+            if dtmf_digit:
                 now = time.time()
-                if digit and (digit != dtmf_last_digit or (now - dtmf_last_time) > DTMF_DEBOUNCE_TIME):
-                    print(f"DTMF detected: {digit}")
-                    dtmf_last_digit = digit
+                if dtmf_digit != dtmf_last_digit or (now - dtmf_last_time) > DTMF_DEBOUNCE_TIME:
+                    print(f"DTMF detected: {dtmf_digit}")
+                    dtmf_buffer += dtmf_digit
+                    dtmf_last_digit = dtmf_digit
                     dtmf_last_time = now
-                    dtmf_buffer += digit
-                    if len(dtmf_buffer) > 8:
-                        dtmf_buffer = dtmf_buffer[-8:]
-                    if not parrot_mode and "#98" in dtmf_buffer:
+
+                    # --- Parrot Mode Trigger ---
+                    if dtmf_buffer.endswith("#98") and not parrot_mode:
+                        print("Parrot mode enabled by DTMF #98.")
                         parrot_mode = True
                         parrot_waiting_for_next_vad = True
-                        parrot_recording = False
-                        parrot_audio = []
-                        parrot_ready_to_record = False
-                        print("Entering parrot mode, please wait for the end of this transmission.")
-                        dtmf_buffer = ""
+                        dtmf_buffer = ""  # Optionally clear buffer after trigger
 
-            # --- RF Baselining ---
+            # --- DTMF and Parrot Mode Activation (unchanged) ---
+            # ... (keep your DTMF and parrot mode logic here) ...
+
+            # --- RF Baselining (unchanged) ---
             if is_baselining_rf:
                 baseline_rf_power_values.append(chunk_rf_power)
+                # Also measure CTCSS power for this chunk
+                baseline_ctcss_buffer = np.concatenate((baseline_ctcss_buffer, audio_chunk_normalized))
+                if len(baseline_ctcss_buffer) >= 2048:
+                    ctcss_power = detect_ctcss_tone(baseline_ctcss_buffer, AUDIO_DOWNSAMPLE_RATE, return_power=True)
+                    print(f"Baseline CTCSS power: {ctcss_power}")
+                    baseline_ctcss_powers.append(ctcss_power)
+                    baseline_ctcss_buffer = np.array([], dtype=np.float32)
                 if (time.time() - baselining_start_time) >= BASELINE_DURATION_SECONDS:
                     if baseline_rf_power_values:
                         avg_rf_noise = np.mean(baseline_rf_power_values)
                         std_rf_noise = np.std(baseline_rf_power_values)
-                        dynamic_rf_vad_trigger_threshold = avg_rf_noise + (RF_VAD_STD_MULTIPLIER * std_rf_noise)
-                        if dynamic_rf_vad_trigger_threshold < avg_rf_noise * 1.2:
-                            dynamic_rf_vad_trigger_threshold = avg_rf_noise * 1.2
-                        if dynamic_rf_vad_trigger_threshold == 0 and avg_rf_noise == 0:
-                            dynamic_rf_vad_trigger_threshold = 1e-9
-                        print(f"--- RF Baselining complete. Threshold: {dynamic_rf_vad_trigger_threshold:.8f} ---")
-                        baseline_noise_power = avg_rf_noise  # avg_rf_noise is already mean(abs(iq)^2)
-                    else:
-                        print("Warning: No RF data for baselining. Using default.")
-                        dynamic_rf_vad_trigger_threshold = 1e-7 
+                        baseline_noise_power = avg_rf_noise
                     is_baselining_rf = False
                     baseline_rf_power_values.clear()
-                    write_status('ready')
+                    # --- NEW CTCSS THRESHOLD LOGIC ---
+                    max_baseline_ctcss_power = max(baseline_ctcss_powers) if baseline_ctcss_powers else 0
+                    if str(cfg.get('CTCSS_THRESHOLD', 'auto')).lower() == 'auto':
+                        CTCSS_THRESHOLD = max_baseline_ctcss_power * 1.5
+                        if not CTCSS_THRESHOLD or CTCSS_THRESHOLD < 1:  # Avoid zero/very low threshold
+                            CTCSS_THRESHOLD = 1000  # <-- Set a safe default for your environment
+                        print(f"Auto CTCSS threshold set to {CTCSS_THRESHOLD:.2f} (1.5x max baseline CTCSS power {max_baseline_ctcss_power:.2f})")
+                    else:
+                        CTCSS_THRESHOLD = float(cfg.get('CTCSS_THRESHOLD'))
+                        print(f"Manual CTCSS threshold set to {CTCSS_THRESHOLD:.2f}")
+                    baseline_ctcss_powers.clear()
                 continue
 
-            # --- VAD Audio Buffering ---
-            if is_capturing_speech_rf:
-                vad_audio_buffer = np.concatenate((vad_audio_buffer, audio_chunk_normalized))
-                if iq_data_for_chunk is not None:
-                    vad_iq_buffer.append(iq_data_for_chunk)
-                if chunk_rf_power < dynamic_rf_vad_trigger_threshold:
-                    rf_silence_chunk_counter += 1
+            # --- CTCSS Detection and Audio Buffering ---
+            ctcss_buffer = np.concatenate((ctcss_buffer, audio_chunk_normalized))
+            ctcss_detected = False
+            if len(ctcss_buffer) >= 2048:
+                ctcss_power = detect_ctcss_tone(ctcss_buffer, AUDIO_DOWNSAMPLE_RATE, return_power=True)
+                ctcss_detected = ctcss_power > CTCSS_THRESHOLD
+                ctcss_buffer = np.array([], dtype=np.float32)
+
+                if ctcss_detected:
+                    ctcss_consecutive_count += 1
                 else:
-                    rf_silence_chunk_counter = 0
+                    ctcss_consecutive_count = 0
 
-                process_this_rf_segment = False
-                if rf_silence_chunk_counter >= RF_VAD_SILENCE_CHUNKS_FOR_END:
-                    print("VAD: End of transmission detected.")
-                    process_this_rf_segment = True
-                elif len(vad_audio_buffer) >= VAD_MAX_SPEECH_SAMPLES:
-                    print("VAD: Max speech duration reached.")
-                    process_this_rf_segment = True
+                if ctcss_consecutive_count >= CTCSS_CONSECUTIVE_REQUIRED:
+                    # Only now set ctcss_active = True and start capture
+                    last_ctcss_time = current_time
+                    if not ctcss_active:
+                        print("CTCSS detected: starting capture.")
+                        ctcss_active = True
 
-                if process_this_rf_segment:
-                    recognized_text_segment = None
-                    if len(vad_audio_buffer) >= VAD_MIN_SPEECH_SAMPLES:
-                        print(f"Processing captured segment (RF VAD): {len(vad_audio_buffer)/AUDIO_DOWNSAMPLE_RATE:.2f}s audio (with {len(vad_iq_buffer)} IQ chunks).")
+            # Always buffer audio while CTCSS is active or within holdtime
+            if ctcss_active or ctcss_detected or (current_time - last_ctcss_time) <= CTCSS_HOLDTIME:
+                audio_buffer = np.concatenate((audio_buffer, audio_chunk_normalized))
+                if iq_data_for_chunk is not None:
+                    iq_buffer.append(iq_data_for_chunk)
 
-                        # --- Save WAV ---
-                        os.makedirs(VAD_WAV_OUTPUT_DIR, exist_ok=True)
-                        capture_uid = uuid.uuid4().hex[:16]
-                        wav_filename = f"vad_capture_{time.strftime('%Y%m%d_%H%M%S')}_{capture_uid}.wav"
-                        wav_path = os.path.join(VAD_WAV_OUTPUT_DIR, wav_filename)
-                        audio_data_int16 = (vad_audio_buffer * 32767).astype(np.int16)
-                        wavfile.write(wav_path, AUDIO_DOWNSAMPLE_RATE, audio_data_int16)
+            if ctcss_detected:
+                last_ctcss_time = current_time
+                if not ctcss_active:
+                    print("CTCSS detected: starting capture.")
+                    ctcss_active = True
 
-                        # --- Save Spectrogram ---
+            # Only end capture if CTCSS has been gone for holdtime
+            if ctcss_active and (current_time - last_ctcss_time) > CTCSS_HOLDTIME:
+                buffer_duration = len(audio_buffer) / AUDIO_DOWNSAMPLE_RATE
+                print(f"CTCSS lost: processing segment ({buffer_duration:.2f}s audio).")
+                if buffer_duration >= MIN_TRANSMISSION_LENGTH:
+                    # --- Save WAV ---
+                    os.makedirs(AUDIO_WAV_OUTPUT_DIR, exist_ok=True)
+                    capture_uid = uuid.uuid4().hex[:16]
+                    wav_filename = f"ctcss_capture_{time.strftime('%Y%m%d_%H%M%S')}_{capture_uid}.wav"
+                    wav_path = os.path.join(AUDIO_WAV_OUTPUT_DIR, wav_filename)
+                    # Apply HPF if you use it for STT
+                    audio_for_wav = sig.sosfilt(HPF_SOS, audio_buffer)
+                    audio_data_int16 = np.clip(audio_for_wav, -1.0, 1.0) * 32767
+                    audio_data_int16 = audio_data_int16.astype(np.int16)
+                    wavfile.write(wav_path, AUDIO_DOWNSAMPLE_RATE, audio_data_int16)
+
+                    # --- Save Spectrogram ---
+                    if SAVE_SPECTROGRAM:
                         spec_filename = wav_filename.replace('.wav', '.png')
-                        spec_path = os.path.join(VAD_WAV_OUTPUT_DIR, spec_filename)
+                        spec_path = os.path.join(AUDIO_WAV_OUTPUT_DIR, spec_filename)
                         plt.figure(figsize=(8, 4))
-                        plt.specgram(vad_audio_buffer, NFFT=256, Fs=AUDIO_DOWNSAMPLE_RATE, noverlap=128, cmap='viridis')
+                        plt.specgram(audio_for_wav, NFFT=256, Fs=AUDIO_DOWNSAMPLE_RATE, noverlap=128, cmap='viridis')
                         plt.title(f"Spectrogram {capture_uid}")
                         plt.xlabel("Time (s)")
                         plt.ylabel("Frequency (Hz)")
@@ -474,44 +516,36 @@ def audio_processing_thread_func():
                         plt.savefig(spec_path, bbox_inches='tight')
                         plt.close()
 
-                        # --- STT Recognition ---
-                        if vosk_recognizer_instance:
-                            audio_bytes = audio_data_int16.tobytes()
-                            vosk_recognizer_instance.Reset()
-                            if vosk_recognizer_instance.AcceptWaveform(audio_bytes):
-                                result = json.loads(vosk_recognizer_instance.Result())
-                                recognized_text_segment = result.get('text', '')
-                            else:
-                                final_result_json = json.loads(vosk_recognizer_instance.FinalResult())
-                                recognized_text_segment = final_result_json.get('text', '')
-                            print(f"STT recognized: '{recognized_text_segment}'")
-                        else:
-                            print("STT: Recognizer not available.")
-
-                        # --- Log the signal report (make sure you pass the file paths!) ---
-                        process_stt_result.last_vad_audio_len = len(vad_audio_buffer)
-                        process_stt_result(
-                            recognized_text_segment or '',
-                            list(vad_iq_buffer),
-                            uid=capture_uid,
-                            vad_trigger_threshold=dynamic_rf_vad_trigger_threshold
-                        )
-                    vad_audio_buffer = np.array([], dtype=np.float32)
-                    vad_iq_buffer.clear()
-                    is_capturing_speech_rf = False
-                    rf_silence_chunk_counter = 0
+                    # --- STT Recognition ---
+                    recognized_text_segment = ''
                     if vosk_recognizer_instance:
+                        audio_bytes = audio_data_int16.tobytes()
                         vosk_recognizer_instance.Reset()
-            elif not is_baselining_rf and chunk_rf_power >= dynamic_rf_vad_trigger_threshold:
-                print("VAD: Triggered! Starting capture.")
-                is_capturing_speech_rf = True
-                vad_audio_buffer = np.copy(audio_chunk_normalized)
-                vad_iq_buffer.clear()
-                if iq_data_for_chunk is not None:
-                    vad_iq_buffer.append(iq_data_for_chunk)
-                rf_silence_chunk_counter = 0
-                if vosk_recognizer_instance:
-                    vosk_recognizer_instance.Reset()
+                        if vosk_recognizer_instance.AcceptWaveform(audio_bytes):
+                            result = json.loads(vosk_recognizer_instance.Result())
+                            recognized_text_segment = result.get('text', '')
+                        else:
+                            final_result_json = json.loads(vosk_recognizer_instance.FinalResult())
+                            recognized_text_segment = final_result_json.get('text', '')
+                        print(f"STT recognized: '{recognized_text_segment}'")
+                    else:
+                        print("STT: Recognizer not available.")
+
+                    # --- Log the signal report ---
+                    process_stt_result.last_audio_len = len(audio_buffer)
+                    process_stt_result(
+                        recognized_text_segment or '',
+                        list(iq_buffer),
+                        uid=capture_uid
+                    )
+
+                # Clear buffers after processing
+                audio_buffer = np.array([], dtype=np.float32)
+                iq_buffer.clear()
+                ctcss_active = False
+
+            # --- Parrot Mode Logic (unchanged) ---
+            # ... (keep your parrot mode logic here) ...
 
         except queue.Empty:
             continue
@@ -521,28 +555,27 @@ def audio_processing_thread_func():
             traceback.print_exc()
 
         # --- Parrot Mode Logic ---
-        if parrot_mode and parrot_waiting_for_next_vad and not is_capturing_speech_rf and getattr(audio_processing_thread_func, 'was_capturing_speech_rf', False):
+        if parrot_mode and parrot_waiting_for_next_vad and not ctcss_active:
             print("Parrot mode enabled. Please transmit a phrase.")
             speak_and_transmit("Parrot mode enabled. Please transmit a phrase.")
             parrot_waiting_for_next_vad = False
             parrot_ready_to_record = True
 
         if parrot_mode and parrot_ready_to_record:
-            # Start recording on the next VAD trigger (edge: silence -> speech)
-            if is_capturing_speech_rf and not getattr(audio_processing_thread_func, 'was_capturing_speech_rf', False):
+            if ctcss_active:
                 parrot_recording = True
                 parrot_ready_to_record = False
                 parrot_audio = []
                 print("Parrot mode: Recording transmission...")
 
-        if parrot_mode and parrot_recording and is_capturing_speech_rf:
+        if parrot_mode and parrot_recording and ctcss_active:
             parrot_audio.append(np.copy(audio_chunk_normalized))
 
-        if parrot_mode and parrot_recording and len(parrot_audio) > 0 and not is_capturing_speech_rf and getattr(audio_processing_thread_func, 'was_capturing_speech_rf', False):
+        if parrot_mode and parrot_recording and len(parrot_audio) > 0 and not ctcss_active:
             print("Playing back your transmission...")
             speak_and_transmit("Playing back your transmission.")
             parrot_samples = np.concatenate(parrot_audio)
-            parrot_wav_path = os.path.join(VAD_WAV_OUTPUT_DIR, "parrot_playback.wav")
+            parrot_wav_path = os.path.join(AUDIO_WAV_OUTPUT_DIR, "parrot_playback.wav")
             wavfile.write(parrot_wav_path, AUDIO_DOWNSAMPLE_RATE, (parrot_samples * 32767).astype(np.int16))
             current_os = platform.system().lower()
             if "windows" in current_os:
@@ -565,7 +598,7 @@ def audio_processing_thread_func():
             parrot_waiting_for_next_vad = False
             parrot_ready_to_record = False
 
-        audio_processing_thread_func.was_capturing_speech_rf = is_capturing_speech_rf
+        #audio_processing_thread_func.was_capturing_speech_rf = is_capturing_speech_rf
 
 def input_monitor_thread_func():
     print("Input monitor thread started. Type 'exit' to quit.")
@@ -604,6 +637,7 @@ parrot_mode = False
 parrot_recording = False
 parrot_audio = []
 parrot_waiting_for_next_vad = False
+parrot_ready_to_record = False  # <-- Add this line
 
 def detect_dtmf_digit(samples, sample_rate):
     """Detect a single DTMF digit in the given audio samples using Goertzel algorithm with stricter validation."""
@@ -635,7 +669,7 @@ def detect_dtmf_digit(samples, sample_rate):
     high_sorted = sorted(high_strengths.values(), reverse=True)
 
     # --- TUNE THESE THRESHOLDS ---
-    MIN_POWER = 2e7         # Minimum power for a valid tone (increase if needed)
+    MIN_POWER = 1000         # Minimum power for a valid tone (increase if needed)
     DOMINANCE = 3.0         # Strongest must be this many times stronger than next
     BAND_BALANCE = 0.5      # Low and high must be similar in power (ratio)
     # -----------------------------
@@ -654,6 +688,28 @@ def detect_dtmf_digit(samples, sample_rate):
         return None
 
     return DTMF_MAP.get((low, high))
+
+def detect_ctcss_tone(audio_samples, sample_rate, ctcss_freq=CTCSS_FREQ, threshold=None, return_power=False):
+    N = len(audio_samples)
+    if N < int(sample_rate * 0.02):
+        return (0.0 if return_power else False)
+    k = int(0.5 + N * ctcss_freq / sample_rate)
+    w = 2 * np.pi * k / N
+    cosine = np.cos(w)
+    coeff = 2 * cosine
+    q0 = 0
+    q1 = 0
+    q2 = 0
+    for sample in audio_samples:
+        q0 = coeff * q1 - q2 + sample
+        q2 = q1
+        q1 = q0
+    power = q1**2 + q2**2 - q1*q2*coeff
+    if return_power:
+        return power
+    if threshold is None:
+        threshold = CTCSS_THRESHOLD if CTCSS_THRESHOLD is not None else 1000  # fallback
+    return power > threshold
 
 if __name__ == "__main__":
     sdr = None; audio_thread = None; input_thread = None
