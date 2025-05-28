@@ -4,7 +4,8 @@ document.addEventListener('DOMContentLoaded', function() {
       let s = data;
       let html = '';
       if (s.running) {
-        if (s.state === 'baselining') html += '<div class="msg" style="color:orange;font-weight:bold;">SigRep is baselining... Please wait.</div>';
+        if (s.state === 'initializing') html += '<div class="msg" style="color:blue;font-weight:bold;">SigRep is initializing...</div>';
+        else if (s.state === 'baselining') html += '<div class="msg" style="color:orange;font-weight:bold;">SigRep is baselining... Please wait.</div>';
         else if (s.state === 'ready') html += '<div class="msg" style="color:green;font-weight:bold;">SigRep is running and ready.</div>';
         else html += '<div class="msg" style="color:gray;">SigRep is running (status unknown).</div>';
       } else {

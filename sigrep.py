@@ -329,7 +329,7 @@ def validate_callsign_format(callsign_text):
     if not callsign_text: return False
     return bool(re.match(CALLSIGN_REGEX, callsign_text.upper()))
 
-def process_stt_result(text_input, iq_data_for_snr_list, uid=None):
+def process_stt_result(text_input, iq_data_for_snr_list, uid=None, audio_path=None, spectrogram_path=None):
     text_lower = text_input.lower(); print(f"STT recognized: '{text_input}'")
     try:
         words = text_lower.split(); nato_callsign_words = []
@@ -341,7 +341,10 @@ def process_stt_result(text_input, iq_data_for_snr_list, uid=None):
         s_meter, snr = calculate_signal_metrics(iq_data_for_snr_list)
         duration_sec = getattr(process_stt_result, 'last_audio_len', 0) / AUDIO_DOWNSAMPLE_RATE
         log_callsign = actual_callsign_text if validate_callsign_format(actual_callsign_text) else 'Unknown'
-        log_signal_report(log_callsign, s_meter, snr, text_input, duration_sec, uid=uid)
+        log_signal_report(
+            log_callsign, s_meter, snr, text_input, duration_sec,
+            audio_path, spectrogram_path
+        )
         if text_lower.endswith(TRIGGER_PHRASE_END) and validate_callsign_format(actual_callsign_text):
             if hasattr(process_stt_result, 'last_call_info') and \
                process_stt_result.last_call_info['callsign'] == actual_callsign_text and \
@@ -372,10 +375,14 @@ def write_status(state):
     with open(SIGREP_STATUS_FILE, 'w') as f:
         json.dump(status, f)
 
+# --- Set status to initializing at program start ---
+write_status('initializing')
+
 def audio_processing_thread_func():
     global is_baselining_rf, baseline_rf_power_values
     global dtmf_last_digit, dtmf_last_time, dtmf_buffer
     global parrot_mode, parrot_recording, parrot_audio, parrot_waiting_for_next_transmission, parrot_ready_to_record
+    global CTCSS_THRESHOLD  # <-- Add this line
 
     print("Audio processing thread started.")
     write_status('baselining')
@@ -446,25 +453,26 @@ def audio_processing_thread_func():
                     max_baseline_ctcss_power = max(baseline_ctcss_powers) if baseline_ctcss_powers else 0
                     if str(cfg.get('CTCSS_THRESHOLD', 'auto')).lower() == 'auto':
                         CTCSS_THRESHOLD = max_baseline_ctcss_power * 1.5
-                        if not CTCSS_THRESHOLD or CTCSS_THRESHOLD < 1:  # Avoid zero/very low threshold
-                            CTCSS_THRESHOLD = 1000  # <-- Set a safe default for your environment
+                        if not CTCSS_THRESHOLD or CTCSS_THRESHOLD < 1:
+                            CTCSS_THRESHOLD = 1000
                         print(f"Auto CTCSS threshold set to {CTCSS_THRESHOLD:.2f} (1.5x max baseline CTCSS power {max_baseline_ctcss_power:.2f})")
                     else:
                         CTCSS_THRESHOLD = float(cfg.get('CTCSS_THRESHOLD'))
                         print(f"Manual CTCSS threshold set to {CTCSS_THRESHOLD:.2f}")
                     baseline_ctcss_powers.clear()
-                continue
+                    write_status('ready')  # <-- Add this line
+                    continue
 
             # --- CTCSS Detection and Audio Buffering ---
             ctcss_buffer = np.concatenate((ctcss_buffer, audio_chunk_normalized))
             ctcss_detected = False
-            if len(ctcss_buffer) >= 2048:
+            if len(ctcss_buffer) >= 2048 and CTCSS_THRESHOLD is not None:
                 ctcss_power = detect_ctcss_tone(ctcss_buffer, AUDIO_DOWNSAMPLE_RATE, return_power=True)
                 ctcss_detected = ctcss_power > CTCSS_THRESHOLD
                 ctcss_buffer = np.array([], dtype=np.float32)
 
                 if ctcss_detected:
-                    ctcss_consecutive_count += 1
+                    ctcss_consecutive_count += 2
                 else:
                     ctcss_consecutive_count = 0
 
@@ -474,6 +482,8 @@ def audio_processing_thread_func():
                     if not ctcss_active:
                         print("CTCSS detected: starting capture.")
                         ctcss_active = True
+            else:
+                ctcss_detected = False
 
             # Always buffer audio while CTCSS is active or within holdtime
             if ctcss_active or ctcss_detected or (current_time - last_ctcss_time) <= CTCSS_HOLDTIME:
@@ -536,7 +546,9 @@ def audio_processing_thread_func():
                     process_stt_result(
                         recognized_text_segment or '',
                         list(iq_buffer),
-                        uid=capture_uid
+                        uid=capture_uid,
+                        audio_path=wav_path,
+                        spectrogram_path=spec_path if SAVE_SPECTROGRAM else None
                     )
 
                 # Clear buffers after processing

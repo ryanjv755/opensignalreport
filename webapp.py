@@ -273,21 +273,12 @@ def config():
             sample_rate = int(request.form['SDR_SAMPLE_RATE'])
             if not (8000 <= sample_rate <= 10_000_000):
                 raise ValueError('Sample rate must be between 8,000 and 10,000,000 Hz.')
-            gain = int(request.form['SDR_GAIN'])
+            gain = float(request.form['SDR_GAIN'])
             if not (0 <= gain <= 100):
                 raise ValueError('Gain must be between 0 and 100 dB.')
             baseline = float(request.form['BASELINE_DURATION_SECONDS'])
             if not (0.1 <= baseline <= 600):
                 raise ValueError('Baseline duration must be between 0.1 and 600 seconds.')
-            vad_std = float(request.form['RF_VAD_STD_MULTIPLIER'])
-            if not (0.01 <= vad_std <= 100):
-                raise ValueError('VAD Std Multiplier must be between 0.01 and 100.')
-            vad_capture = float(request.form['VAD_SPEECH_CAPTURE_SECONDS'])
-            if not (0.1 <= vad_capture <= 60):
-                raise ValueError('VAD Speech Capture must be between 0.1 and 60 seconds.')
-            vad_min = float(request.form['VAD_MIN_SPEECH_SECONDS'])
-            if not (0.01 <= vad_min <= 10):
-                raise ValueError('VAD Min Speech must be between 0.01 and 10 seconds.')
             audio_down = int(request.form['AUDIO_DOWNSAMPLE_RATE'])
             if not (8000 <= audio_down <= 48000):
                 raise ValueError('Audio Downsample Rate must be between 8000 and 48000 Hz.')
@@ -312,29 +303,30 @@ def config():
             vosk_path = request.form['VOSK_MODEL_PATH']
             if not vosk_path or len(vosk_path) > 256:
                 raise ValueError('Vosk Model Path must be non-empty and less than 256 characters.')
-            # S9 dBFS reference
-            s9_dbfs_ref = float(request.form['S9_DBFS_REF'])
-            if not (-200 <= s9_dbfs_ref <= 0):
-                raise ValueError('S9 dBFS reference must be between -200 and 0 dBFS.')
+            ctcss_freq = float(request.form['CTCSS_FREQ'])
+            ctcss_threshold = request.form['CTCSS_THRESHOLD']
+            ctcss_holdtime = float(request.form['CTCSS_HOLDTIME'])
+            min_trans_len = float(request.form['MIN_TRANSMISSION_LENGTH'])
+            save_spec = request.form.get('SAVE_SPECTROGRAM') == 'on'
             # Save validated values
             cfg['SDR_CENTER_FREQ'] = center_freq
             cfg['SDR_SAMPLE_RATE'] = sample_rate
             cfg['SDR_GAIN'] = gain
             cfg['SDR_OFFSET_TUNING'] = request.form.get('SDR_OFFSET_TUNING') == 'on'
-            cfg['S9_DBFS_REF'] = s9_dbfs_ref
             cfg['BASELINE_DURATION_SECONDS'] = baseline
-            cfg['RF_VAD_STD_MULTIPLIER'] = vad_std
-            cfg['VAD_SPEECH_CAPTURE_SECONDS'] = vad_capture
-            cfg['VAD_MIN_SPEECH_SECONDS'] = vad_min
             cfg['AUDIO_DOWNSAMPLE_RATE'] = audio_down
             cfg['NFM_FILTER_CUTOFF'] = nfm_cutoff
             cfg['HPF_CUTOFF_HZ'] = hpf_cutoff
             cfg['HPF_ORDER'] = hpf_order
-            cfg['SAVE_SPECTROGRAM'] = request.form.get('SAVE_SPECTROGRAM') == 'on'
+            cfg['SAVE_SPECTROGRAM'] = save_spec
             cfg['STT_ENGINE'] = stt_engine
             cfg['VOSK_MODEL_PATH'] = vosk_path
             cfg['WEB_PORT'] = web_port
             cfg['WEB_HOST'] = web_host
+            cfg['CTCSS_FREQ'] = ctcss_freq
+            cfg['CTCSS_THRESHOLD'] = ctcss_threshold
+            cfg['CTCSS_HOLDTIME'] = ctcss_holdtime
+            cfg['MIN_TRANSMISSION_LENGTH'] = min_trans_len
             save_config(cfg)
             return redirect(url_for('config'))
         except Exception as e:
@@ -348,7 +340,6 @@ def config():
         center_freq_display = f"{center_freq_val / 1e6:.3f}"
     else:
         center_freq_display = str(center_freq_val)
-    s9_dbfs_val = cfg.get('S9_DBFS_REF', -62)
     html = NAVBAR + GLOBAL_STYLE + f'''
     <div class="main-container">
     <h1>Configuration</h1>
@@ -359,23 +350,23 @@ def config():
         <legend style="font-weight:bold;color:var(--fg,#222);">SDR Settings</legend>
         <label style="color:var(--fg,#222);">Center Frequency (MHz):<br><input name="SDR_CENTER_FREQ" type="number" value="{center_freq_display}" step="0.001" style="width:100%"></label><br>
         <label style="color:var(--fg,#222);">Sample Rate (Hz):<br><input name="SDR_SAMPLE_RATE" type="number" value="{cfg['SDR_SAMPLE_RATE']}" step="1" style="width:100%"></label><br>
-        <label style="color:var(--fg,#222);">Gain (dB):<br><input name="SDR_GAIN" type="number" value="{cfg['SDR_GAIN']}" step="1" style="width:100%"></label><br>
+        <label style="color:var(--fg,#222);">Gain (dB):<br><input name="SDR_GAIN" type="number" value="{cfg['SDR_GAIN']}" step="0.1" style="width:100%"></label><br>
         <label style="color:var(--fg,#222);">Offset Tuning: <input name="SDR_OFFSET_TUNING" type="checkbox" {checked_offset}></label>
-        <label style="color:var(--fg,#222);">S9 dBFS Reference:<br><input name="S9_DBFS_REF" type="number" value="{s9_dbfs_val}" step="0.1" min="-200" max="0" style="width:100%"></label><br>
       </fieldset>
       <fieldset style="margin-bottom:18px;padding:10px 15px;border-radius:6px;border:1px solid var(--border,#bbb);background:var(--table,#fff);">
-        <legend style="font-weight:bold;color:var(--fg,#222);">VAD & Audio Processing</legend>
+        <legend style="font-weight:bold;color:var(--fg,#222);">Audio Processing</legend>
         <label style="color:var(--fg,#222);">Baseline Duration (s):<br><input name="BASELINE_DURATION_SECONDS" type="number" value="{cfg['BASELINE_DURATION_SECONDS']}" step="0.1" style="width:100%"></label><br>
-        <label style="color:var(--fg,#222);">RF VAD Std Multiplier:<br><input name="RF_VAD_STD_MULTIPLIER" type="number" value="{cfg['RF_VAD_STD_MULTIPLIER']}" step="0.01" style="width:100%"></label><br>
-        <label style="color:var(--fg,#222);">VAD Speech Capture (s):<br><input name="VAD_SPEECH_CAPTURE_SECONDS" type="number" value="{cfg['VAD_SPEECH_CAPTURE_SECONDS']}" step="0.1" style="width:100%"></label><br>
-        <label style="color:var(--fg,#222);">VAD Min Speech (s):<br><input name="VAD_MIN_SPEECH_SECONDS" type="number" value="{cfg['VAD_MIN_SPEECH_SECONDS']}" step="0.01" style="width:100%"></label><br>
         <label style="color:var(--fg,#222);">Audio Downsample Rate (Hz):<br><input name="AUDIO_DOWNSAMPLE_RATE" type="number" value="{cfg['AUDIO_DOWNSAMPLE_RATE']}" step="1" style="width:100%"></label><br>
         <label style="color:var(--fg,#222);">NFM Filter Cutoff (Hz):<br><input name="NFM_FILTER_CUTOFF" type="number" value="{cfg['NFM_FILTER_CUTOFF']}" step="1" style="width:100%"></label><br>
         <label style="color:var(--fg,#222);">HPF Cutoff (Hz):<br><input name="HPF_CUTOFF_HZ" type="number" value="{cfg['HPF_CUTOFF_HZ']}" step="1" style="width:100%"></label><br>
         <label style="color:var(--fg,#222);">HPF Order:<br><input name="HPF_ORDER" type="number" value="{cfg['HPF_ORDER']}" step="1" style="width:100%"></label><br>
       </fieldset>
       <fieldset style="margin-bottom:18px;padding:10px 15px;border-radius:6px;border:1px solid var(--border,#bbb);background:var(--table,#fff);">
-        <legend style="font-weight:bold;color:var(--fg,#222);">Spectrogram & Web UI</legend>
+        <legend style="font-weight:bold;color:var(--fg,#222);">CTCSS & Web UI</legend>
+        <label style="color:var(--fg,#222);">CTCSS Frequency (Hz):<br><input name="CTCSS_FREQ" type="number" value="{cfg['CTCSS_FREQ']}" step="0.01" style="width:100%"></label><br>
+        <label style="color:var(--fg,#222);">CTCSS Threshold:<br><input name="CTCSS_THRESHOLD" type="text" value="{cfg['CTCSS_THRESHOLD']}" style="width:100%"></label><br>
+        <label style="color:var(--fg,#222);">CTCSS Hold Time (s):<br><input name="CTCSS_HOLDTIME" type="number" value="{cfg['CTCSS_HOLDTIME']}" step="0.01" style="width:100%"></label><br>
+        <label style="color:var(--fg,#222);">Min Transmission Length (s):<br><input name="MIN_TRANSMISSION_LENGTH" type="number" value="{cfg['MIN_TRANSMISSION_LENGTH']}" step="0.01" style="width:100%"></label><br>
         <label style="color:var(--fg,#222);">Save Spectrogram: <input name="SAVE_SPECTROGRAM" type="checkbox" {checked_spec}></label><br>
         <label style="color:var(--fg,#222);">STT Engine:<br><input name="STT_ENGINE" type="text" value="{cfg['STT_ENGINE']}" style="width:100%"></label><br>
         <label style="color:var(--fg,#222);">Vosk Model Path:<br><input name="VOSK_MODEL_PATH" type="text" value="{cfg['VOSK_MODEL_PATH']}" style="width:100%"></label><br>

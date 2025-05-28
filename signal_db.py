@@ -11,8 +11,9 @@ CREATE TABLE IF NOT EXISTS signal_reports (
     s_meter TEXT,
     snr_db REAL,
     duration_sec REAL,
-    vad_trigger_threshold REAL,
-    recognized_text TEXT
+    recognized_text TEXT,
+    audio_path TEXT,
+    spectrogram_path TEXT
 );
 '''
 
@@ -25,7 +26,7 @@ def ensure_table_exists():
         conn.execute(SQLITE_TABLE_SCHEMA)
         conn.commit()
 
-def log_signal_report(callsign, s_meter, snr, recognized_text, duration_sec, timestamp=None, uid=None):
+def log_signal_report(callsign, s_meter, snr, recognized_text, duration_sec, audio_path, spectrogram_path, timestamp=None, uid=None):
     if timestamp is None:
         timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
     if uid is None:
@@ -33,10 +34,11 @@ def log_signal_report(callsign, s_meter, snr, recognized_text, duration_sec, tim
     with get_sqlite_connection() as conn:
         conn.execute(
             """
-            INSERT OR REPLACE INTO signal_reports (uid, timestamp, callsign, s_meter, snr_db, duration_sec, recognized_text)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO signal_reports
+            (uid, timestamp, callsign, s_meter, snr_db, duration_sec, recognized_text, audio_path, spectrogram_path)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (uid, timestamp, callsign, s_meter, snr, duration_sec, recognized_text)
+            (uid, timestamp, callsign, s_meter, snr, duration_sec, recognized_text, audio_path, spectrogram_path)
         )
         conn.commit()
 
