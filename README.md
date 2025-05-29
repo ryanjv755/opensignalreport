@@ -140,8 +140,12 @@ Spectrogram images are saved in the `wavs/` directory alongside the correspondin
 3. **Playback**:  
    After you unkey, the system will automatically play back your recorded audio over the air.
 
-4. **Disable Parrot Mode**:  
-   To disable parrot mode, send the DTMF sequence `#99`.
+---
+
+## On-Air Help: DTMF #43
+
+If you ever need a reminder on how to use OpenSignalReport while on the air, simply send the DTMF sequence `#43` during a CTCSS-enabled transmission.  
+The system will transmit a help message over the air (with CTCSS) explaining how to request a signal report and how to use parrot mode.
 
 ---
 

@@ -429,6 +429,20 @@ def audio_processing_thread_func():
                         parrot_waiting_for_next_vad = True
                         dtmf_buffer = ""  # Optionally clear buffer after trigger
 
+            # --- Help Mode Trigger ---
+            if dtmf_buffer.endswith("#43"):
+                print("Help mode triggered by DTMF #43.")
+                help_text = (
+                    "Open Signal Report Help. "
+                    "To get a signal report, transmit your callsign using the phonetic alphabet, "
+                    "followed by the words 'signal report'. For example: "
+                    "'Kilo Romeo Four Delta Tango Tango signal report'. "
+                    "To use parrot mode, send DTMF pound nine eight, then transmit your message. "
+                    "The system will play your transmission back to you. "
+                )
+                speak_and_transmit(help_text)
+                dtmf_buffer = ""  # Clear buffer after help
+
             # --- DTMF and Parrot Mode Activation (unchanged) ---
             # ... (keep your DTMF and parrot mode logic here) ...
 
