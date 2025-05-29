@@ -7,28 +7,51 @@ import numpy as np
 from scipy import signal as sig
 from rtlsdr import RtlSdr
 import json
-import subprocess # For OS-level TTS
-import platform   # To detect OS
-import shlex      # For quoting command arguments safely
-from vosk import Model, KaldiRecognizer, SetLogLevel # Import SetLogLevel
+import subprocess
+import platform
+import shlex
+from vosk import Model, KaldiRecognizer, SetLogLevel
 from scipy.io import wavfile
 import uuid
-import matplotlib.pyplot as plt  # At the top of your script
+import matplotlib.pyplot as plt
 import warnings
-import sqlite3  # Add for SQLite logging
+import sqlite3
 warnings.filterwarnings("ignore", message="Starting a Matplotlib GUI outside of the main thread will likely fail.")
 
-# Add at the top of your script
 baseline_noise_power = None
 baseline_ctcss_powers = []
 
-# --- Set Vosk Log Level ---
-# Set before initializing any Vosk objects to reduce startup verbosity
-# Level 0 is default (verbose), 1 is warnings/errors, -1 is suppress all
-SetLogLevel(1) # Only show warnings and errors from Vosk
+SetLogLevel(1)
 
-# --- Configuration ---
+# --- USER CONFIGURABLE VARIABLES ---
+
 CONFIG_PATH = 'config.json'
+AUDIO_WAV_OUTPUT_DIR = "wavs"
+SAVE_SPECTROGRAM = True
+
+CTCSS_FREQ = 100.0  # Hz
+CTCSS_HOLDTIME = 0.7  # seconds
+MIN_TRANSMISSION_LENGTH = 0.5  # seconds
+
+SDR_CENTER_FREQ = 145570000  # Hz (or 145.570 MHz)
+SDR_SAMPLE_RATE = 1024000    # Hz
+SDR_GAIN = 0                 # dB
+SDR_OFFSET_TUNING = True
+
+NFM_FILTER_CUTOFF = 4000     # Hz
+AUDIO_DOWNSAMPLE_RATE = 16000
+HPF_CUTOFF_HZ = 150
+HPF_ORDER = 4
+
+STT_ENGINE = "vosk"
+VOSK_MODEL_PATH = "vosk-model-en-us-0.22-lgraph"
+BASELINE_DURATION_SECONDS = 10
+SDR_NUM_SAMPLES_PER_CHUNK = 16384
+
+TRIGGER_PHRASE_END = "signal report"
+S9_DBFS_REF = -62  # dBFS reference for S9
+
+
 def load_config():
     with open(CONFIG_PATH, 'r') as f:
         return json.load(f)
@@ -38,23 +61,21 @@ cfg = load_config()
 CTCSS_FREQ = float(cfg.get('CTCSS_FREQ', 100.0))
 ctcss_threshold_cfg = cfg.get('CTCSS_THRESHOLD', 750)
 if str(ctcss_threshold_cfg).lower() == 'auto':
-    CTCSS_THRESHOLD = None  # Will be set after baselining
+    CTCSS_THRESHOLD = None
 else:
     CTCSS_THRESHOLD = float(ctcss_threshold_cfg)
-CTCSS_HOLDTIME = float(cfg.get('CTCSS_HOLDTIME', 0.7))  # seconds, adjust as needed
-MIN_TRANSMISSION_LENGTH = float(cfg.get('MIN_TRANSMISSION_LENGTH', 0.5))  # seconds, ignore very short segments
+CTCSS_HOLDTIME = float(cfg.get('CTCSS_HOLDTIME', 0.7))
+MIN_TRANSMISSION_LENGTH = float(cfg.get('MIN_TRANSMISSION_LENGTH', 0.5))
 AUDIO_WAV_OUTPUT_DIR = "wavs"
 
 SDR_CENTER_FREQ = float(cfg.get('SDR_CENTER_FREQ', 145570000))
-if SDR_CENTER_FREQ < 1e6:  # If user entered in MHz (e.g. 145.570)
+if SDR_CENTER_FREQ < 1e6:
     SDR_CENTER_FREQ = SDR_CENTER_FREQ * 1e6
 SDR_SAMPLE_RATE = float(cfg.get('SDR_SAMPLE_RATE', 1024000))
 SDR_GAIN = int(cfg.get('SDR_GAIN', 0))
 SDR_OFFSET_TUNING = bool(cfg.get('SDR_OFFSET_TUNING', True))
 
-# VAD Wav output directory and spectrogram save option
-VAD_WAV_OUTPUT_DIR = "wavs"
-SAVE_SPECTROGRAM = True  # or from config if you wish
+SAVE_SPECTROGRAM = True
 
 NFM_FILTER_CUTOFF = 4000
 AUDIO_DOWNSAMPLE_RATE = 16000
@@ -68,7 +89,6 @@ SMALL_AUDIO_CHUNK_DURATION = SMALL_AUDIO_CHUNK_SAMPLES / AUDIO_DOWNSAMPLE_RATE i
 is_baselining_rf = True
 baseline_rf_power_values = []
 
-# VAD parameters
 RF_VAD_STD_MULTIPLIER = 1.5
 VAD_SPEECH_CAPTURE_SECONDS = 10.0
 VAD_MAX_SPEECH_SAMPLES = int(VAD_SPEECH_CAPTURE_SECONDS * AUDIO_DOWNSAMPLE_RATE)
@@ -94,13 +114,10 @@ S_METER_DBFS_MAP = {
     -44: "S9+18dB", -38: "S9+24dB", -32: "S9+30dB", -26: "S9+36dB", -20: "S9+40dB"
 }
 
-# S9 dBFS reference, configurable via config.json (default -62)
 S9_DBFS_REF = float(cfg.get('S9_DBFS_REF', -62))
 
-HPF_CUTOFF_HZ = 150  # High-pass filter cutoff frequency in Hz
-HPF_ORDER = 4        # 4th order Butterworth
-
-# Calculate filter coefficients globally for efficiency
+HPF_CUTOFF_HZ = 150
+HPF_ORDER = 4
 HPF_SOS = sig.butter(
     HPF_ORDER,
     HPF_CUTOFF_HZ / (AUDIO_DOWNSAMPLE_RATE / 2),
@@ -110,16 +127,11 @@ HPF_SOS = sig.butter(
 
 VOSK_VOCABULARY = []
 if STT_ENGINE == "vosk":
-
-    # Add all NATO phonetic words (which includes words for numbers like "zero", "one", "four")
     VOSK_VOCABULARY.extend(list(NATO_PHONETIC_ALPHABET.keys()))
-    # Add command words
     VOSK_VOCABULARY.extend(["signal", "report"])
-
     VOSK_GRAMMAR_STR = json.dumps(list(set(VOSK_VOCABULARY)))
 else:
     VOSK_GRAMMAR_STR = None
-
 
 audio_iq_data_queue = queue.Queue()
 
@@ -131,13 +143,10 @@ try:
 except ImportError: print("ERROR: Vosk library not installed.")
 except Exception as e: print(f"Error loading Vosk model: {e}")
 
-# --- SQLite Setup ---
-# (Moved to signal_db.py)
 from signal_db import log_signal_report, ensure_table_exists
 ensure_table_exists()
 
 def speak_and_transmit(text_to_speak):
-    """Speaks text using OS-level TTS commands via subprocess."""
     current_os = platform.system().lower()
     cmd = []
     success = False
@@ -147,7 +156,6 @@ def speak_and_transmit(text_to_speak):
         'check': False,
         'timeout': 20
     }
-
     try:
         if "windows" in current_os:
             escaped_text = text_to_speak.replace("'", "''")
@@ -168,7 +176,6 @@ def speak_and_transmit(text_to_speak):
                    '-EncodedCommand', encoded_ps_command]
             subprocess_kwargs['stdout'] = subprocess.DEVNULL
             subprocess_kwargs['stderr'] = subprocess.PIPE
-
         elif "darwin" in current_os:
             cmd = ['say', '-r', '180', '--', text_to_speak]
             subprocess_kwargs['capture_output'] = True
@@ -211,23 +218,13 @@ def speak_and_transmit(text_to_speak):
         import traceback
         traceback.print_exc()
 
-    # Mix tone and play WAV as before (if using WAV output)
     from scipy.io import wavfile
-
-    # Read the TTS WAV
     rate, data = wavfile.read(tts_wav_path)
     if data.dtype != np.float32:
-        data = data.astype(np.float32) / 32767.0  # Convert to float32 if needed
-
-    # Mix in the tone
+        data = data.astype(np.float32) / 32767.0
     data_with_tone = mix_ultrasonic_tone(data, rate)
-
-    # Convert back to int16 and save
     wavfile.write(tts_wav_path, rate, (data_with_tone * 32767).astype(np.int16))
-
     import sys
-
-    # Play the WAV file (blocking)
     if "windows" in current_os:
         play_cmd = [
             "powershell",
@@ -244,7 +241,6 @@ def speak_and_transmit(text_to_speak):
             subprocess.run(["paplay", tts_wav_path])
     else:
         print("No supported audio playback method for this OS.")
-
     print(f"Transmitted: '{text_to_speak}'")
 
 def sdr_callback(samples, sdr_instance):
@@ -273,7 +269,6 @@ def estimate_s_meter(power_dbfs):
     for dbfs_level, s_unit_val in s_map_sorted:
         if power_dbfs >= dbfs_level: closest_s_unit = s_unit_val
         else: break
-    # Use configurable S9 dBFS reference
     s9_dbfs_level = S9_DBFS_REF
     if power_dbfs > s9_dbfs_level:
         s9_plus_db_raw = power_dbfs - s9_dbfs_level
@@ -294,8 +289,6 @@ def calculate_signal_metrics(iq_samples_list):
         if signal_plus_noise_power < 1e-12:
             return "S0", 0.0
         signal_plus_noise_dbfs = 10 * np.log10(signal_plus_noise_power)
-
-        # Use baseline noise power if available, else fallback to old method
         if baseline_noise_power and baseline_noise_power > 0:
             noise_power = baseline_noise_power
         else:
@@ -304,14 +297,12 @@ def calculate_signal_metrics(iq_samples_list):
             noise_samples = np.concatenate([full_iq_segment[:edge], full_iq_segment[-edge:]])
             noise_power = np.median(np.abs(noise_samples)**2)
             if noise_power < 1e-12:
-                noise_power = 1e-12  # avoid log(0)
-
+                noise_power = 1e-12
         noise_dbfs = 10 * np.log10(noise_power)
         snr_linear = (signal_plus_noise_power - noise_power) / noise_power
         snr_db = 10 * np.log10(max(snr_linear, 1e-12))
-        snr_db = max(0.0, snr_db)
-
         s_meter_reading = estimate_s_meter(signal_plus_noise_dbfs)
+        print(f"signal+noise: {signal_plus_noise_power}, noise: {noise_power}, snr_linear: {snr_linear}, snr_db: {snr_db}")
         return s_meter_reading, snr_db
     except Exception as e:
         print(f"Error calculating signal metrics: {e}")
@@ -353,7 +344,6 @@ def process_stt_result(text_input, iq_data_for_snr_list, uid=None, audio_path=No
             else:
                 process_stt_result.last_call_info = {'callsign': actual_callsign_text, 'time': current_time}
                 response_text = f"{actual_callsign_text}, your signal is {s_meter}, SNR {int(round(snr))} dB."
-
                 print(f"Response: {response_text}")
                 speak_and_transmit(response_text)
         elif not validate_callsign_format(actual_callsign_text):
@@ -367,7 +357,6 @@ if not hasattr(process_stt_result, 'last_call_info'):
 SIGREP_STATUS_FILE = 'sigrep_status.json'
 
 def write_status(state):
-    # If state is 'ready', include a 'last_started' timestamp
     if state == 'ready':
         status = {'state': state, 'last_started': time.strftime('%Y-%m-%d %H:%M:%S')}
     else:
@@ -375,14 +364,13 @@ def write_status(state):
     with open(SIGREP_STATUS_FILE, 'w') as f:
         json.dump(status, f)
 
-# --- Set status to initializing at program start ---
 write_status('initializing')
 
 def audio_processing_thread_func():
     global is_baselining_rf, baseline_rf_power_values
     global dtmf_last_digit, dtmf_last_time, dtmf_buffer
     global parrot_mode, parrot_recording, parrot_audio, parrot_waiting_for_next_transmission, parrot_ready_to_record
-    global CTCSS_THRESHOLD  # <-- Add this line
+    global CTCSS_THRESHOLD
 
     print("Audio processing thread started.")
     write_status('baselining')
@@ -403,10 +391,9 @@ def audio_processing_thread_func():
             print(f"Error initializing Vosk KaldiRecognizer: {e}")
             vosk_recognizer_instance = None
 
-    # --- NEW: Baseline CTCSS Buffer ---
     baseline_ctcss_buffer = np.array([], dtype=np.float32)
     ctcss_consecutive_count = 0
-    CTCSS_CONSECUTIVE_REQUIRED = 3  # Tune as needed
+    CTCSS_CONSECUTIVE_REQUIRED = 8
 
     while True:
         try:
@@ -422,14 +409,12 @@ def audio_processing_thread_func():
                     dtmf_last_digit = dtmf_digit
                     dtmf_last_time = now
 
-                    # --- Parrot Mode Trigger ---
                     if dtmf_buffer.endswith("#98") and not parrot_mode:
                         print("Parrot mode enabled by DTMF #98.")
                         parrot_mode = True
                         parrot_waiting_for_next_vad = True
-                        dtmf_buffer = ""  # Optionally clear buffer after trigger
+                        dtmf_buffer = ""
 
-            # --- Help Mode Trigger ---
             if dtmf_buffer.endswith("#43"):
                 print("Help mode triggered by DTMF #43.")
                 help_text = (
@@ -441,15 +426,10 @@ def audio_processing_thread_func():
                     "The system will play your transmission back to you. "
                 )
                 speak_and_transmit(help_text)
-                dtmf_buffer = ""  # Clear buffer after help
+                dtmf_buffer = ""
 
-            # --- DTMF and Parrot Mode Activation (unchanged) ---
-            # ... (keep your DTMF and parrot mode logic here) ...
-
-            # --- RF Baselining (unchanged) ---
             if is_baselining_rf:
                 baseline_rf_power_values.append(chunk_rf_power)
-                # Also measure CTCSS power for this chunk
                 baseline_ctcss_buffer = np.concatenate((baseline_ctcss_buffer, audio_chunk_normalized))
                 if len(baseline_ctcss_buffer) >= 2048:
                     ctcss_power = detect_ctcss_tone(baseline_ctcss_buffer, AUDIO_DOWNSAMPLE_RATE, return_power=True)
@@ -463,21 +443,24 @@ def audio_processing_thread_func():
                         baseline_noise_power = avg_rf_noise
                     is_baselining_rf = False
                     baseline_rf_power_values.clear()
-                    # --- NEW CTCSS THRESHOLD LOGIC ---
                     max_baseline_ctcss_power = max(baseline_ctcss_powers) if baseline_ctcss_powers else 0
                     if str(cfg.get('CTCSS_THRESHOLD', 'auto')).lower() == 'auto':
-                        CTCSS_THRESHOLD = max_baseline_ctcss_power * 1.5
+                        CTCSS_THRESHOLD = max_baseline_ctcss_power * 2.1
                         if not CTCSS_THRESHOLD or CTCSS_THRESHOLD < 1:
                             CTCSS_THRESHOLD = 1000
-                        print(f"Auto CTCSS threshold set to {CTCSS_THRESHOLD:.2f} (1.5x max baseline CTCSS power {max_baseline_ctcss_power:.2f})")
+                        print(f"Auto CTCSS threshold set to {CTCSS_THRESHOLD:.2f} (2.1x max baseline CTCSS power {max_baseline_ctcss_power:.2f})")
+                        print(f"Baseline noise power set to: {baseline_noise_power}")
                     else:
                         CTCSS_THRESHOLD = float(cfg.get('CTCSS_THRESHOLD'))
                         print(f"Manual CTCSS threshold set to {CTCSS_THRESHOLD:.2f}")
                     baseline_ctcss_powers.clear()
-                    write_status('ready')  # <-- Add this line
+                    write_status('ready')
+                    ctcss_buffer = np.array([], dtype=np.float32)
+                    ctcss_consecutive_count = 0
+                    ctcss_active = False
+                    last_ctcss_time = current_time
                     continue
 
-            # --- CTCSS Detection and Audio Buffering ---
             ctcss_buffer = np.concatenate((ctcss_buffer, audio_chunk_normalized))
             ctcss_detected = False
             if len(ctcss_buffer) >= 2048 and CTCSS_THRESHOLD is not None:
@@ -486,12 +469,11 @@ def audio_processing_thread_func():
                 ctcss_buffer = np.array([], dtype=np.float32)
 
                 if ctcss_detected:
-                    ctcss_consecutive_count += 2
+                    ctcss_consecutive_count += 1
                 else:
                     ctcss_consecutive_count = 0
 
                 if ctcss_consecutive_count >= CTCSS_CONSECUTIVE_REQUIRED:
-                    # Only now set ctcss_active = True and start capture
                     last_ctcss_time = current_time
                     if not ctcss_active:
                         print("CTCSS detected: starting capture.")
@@ -499,7 +481,6 @@ def audio_processing_thread_func():
             else:
                 ctcss_detected = False
 
-            # Always buffer audio while CTCSS is active or within holdtime
             if ctcss_active or ctcss_detected or (current_time - last_ctcss_time) <= CTCSS_HOLDTIME:
                 audio_buffer = np.concatenate((audio_buffer, audio_chunk_normalized))
                 if iq_data_for_chunk is not None:
@@ -511,23 +492,19 @@ def audio_processing_thread_func():
                     print("CTCSS detected: starting capture.")
                     ctcss_active = True
 
-            # Only end capture if CTCSS has been gone for holdtime
             if ctcss_active and (current_time - last_ctcss_time) > CTCSS_HOLDTIME:
                 buffer_duration = len(audio_buffer) / AUDIO_DOWNSAMPLE_RATE
                 print(f"CTCSS lost: processing segment ({buffer_duration:.2f}s audio).")
                 if buffer_duration >= MIN_TRANSMISSION_LENGTH:
-                    # --- Save WAV ---
                     os.makedirs(AUDIO_WAV_OUTPUT_DIR, exist_ok=True)
                     capture_uid = uuid.uuid4().hex[:16]
                     wav_filename = f"ctcss_capture_{time.strftime('%Y%m%d_%H%M%S')}_{capture_uid}.wav"
                     wav_path = os.path.join(AUDIO_WAV_OUTPUT_DIR, wav_filename)
-                    # Apply HPF if you use it for STT
                     audio_for_wav = sig.sosfilt(HPF_SOS, audio_buffer)
                     audio_data_int16 = np.clip(audio_for_wav, -1.0, 1.0) * 32767
                     audio_data_int16 = audio_data_int16.astype(np.int16)
                     wavfile.write(wav_path, AUDIO_DOWNSAMPLE_RATE, audio_data_int16)
 
-                    # --- Save Spectrogram ---
                     if SAVE_SPECTROGRAM:
                         spec_filename = wav_filename.replace('.wav', '.png')
                         spec_path = os.path.join(AUDIO_WAV_OUTPUT_DIR, spec_filename)
@@ -540,7 +517,8 @@ def audio_processing_thread_func():
                         plt.savefig(spec_path, bbox_inches='tight')
                         plt.close()
 
-                    # --- STT Recognition ---
+        # --- SKIP STT IF PARROT MODE IS ACTIVE ---
+                if not parrot_mode:
                     recognized_text_segment = ''
                     if vosk_recognizer_instance:
                         audio_bytes = audio_data_int16.tobytes()
@@ -555,7 +533,6 @@ def audio_processing_thread_func():
                     else:
                         print("STT: Recognizer not available.")
 
-                    # --- Log the signal report ---
                     process_stt_result.last_audio_len = len(audio_buffer)
                     process_stt_result(
                         recognized_text_segment or '',
@@ -565,13 +542,9 @@ def audio_processing_thread_func():
                         spectrogram_path=spec_path if SAVE_SPECTROGRAM else None
                     )
 
-                # Clear buffers after processing
                 audio_buffer = np.array([], dtype=np.float32)
                 iq_buffer.clear()
                 ctcss_active = False
-
-            # --- Parrot Mode Logic (unchanged) ---
-            # ... (keep your parrot mode logic here) ...
 
         except queue.Empty:
             continue
@@ -580,7 +553,6 @@ def audio_processing_thread_func():
             import traceback
             traceback.print_exc()
 
-        # --- Parrot Mode Logic ---
         if parrot_mode and parrot_waiting_for_next_vad and not ctcss_active:
             print("Parrot mode enabled. Please transmit a phrase.")
             speak_and_transmit("Parrot mode enabled. Please transmit a phrase.")
@@ -624,8 +596,6 @@ def audio_processing_thread_func():
             parrot_waiting_for_next_vad = False
             parrot_ready_to_record = False
 
-        #audio_processing_thread_func.was_capturing_speech_rf = is_capturing_speech_rf
-
 def input_monitor_thread_func():
     print("Input monitor thread started. Type 'exit' to quit.")
     while True:
@@ -643,7 +613,6 @@ def mix_ultrasonic_tone(audio, sample_rate, tone_freq=18000, tone_level=0.01):
     tone = tone_level * np.sin(2 * np.pi * tone_freq * t)
     return audio + tone
 
-# --- DTMF Detection Parameters ---
 DTMF_FREQS = {
     'low': [697, 770, 852, 941],
     'high': [1209, 1336, 1477, 1633]
@@ -654,7 +623,7 @@ DTMF_MAP = {
     (852, 1209): '7', (852, 1336): '8', (852, 1477): '9',
     (941, 1209): '*', (941, 1336): '0', (941, 1477): '#'
 }
-DTMF_DEBOUNCE_TIME = 0.35  # seconds, adjust as needed
+DTMF_DEBOUNCE_TIME = 0.35
 
 dtmf_last_digit = None
 dtmf_last_time = 0
@@ -663,10 +632,9 @@ parrot_mode = False
 parrot_recording = False
 parrot_audio = []
 parrot_waiting_for_next_vad = False
-parrot_ready_to_record = False  # <-- Add this line
+parrot_ready_to_record = False
 
 def detect_dtmf_digit(samples, sample_rate):
-    """Detect a single DTMF digit in the given audio samples using Goertzel algorithm with stricter validation."""
     def goertzel(samples, freq, sample_rate):
         N = len(samples)
         k = int(0.5 + N * freq / sample_rate)
@@ -682,37 +650,26 @@ def detect_dtmf_digit(samples, sample_rate):
             q1 = q0
         return q1**2 + q2**2 - q1*q2*coeff
 
-    # Calculate Goertzel power for all DTMF freqs
     low_strengths = {f: goertzel(samples, f, sample_rate) for f in DTMF_FREQS['low']}
     high_strengths = {f: goertzel(samples, f, sample_rate) for f in DTMF_FREQS['high']}
     low = max(low_strengths, key=low_strengths.get)
     high = max(high_strengths, key=high_strengths.get)
     low_val = low_strengths[low]
     high_val = high_strengths[high]
-
-    # Require both bands to be strong and much stronger than the next
     low_sorted = sorted(low_strengths.values(), reverse=True)
     high_sorted = sorted(high_strengths.values(), reverse=True)
-
-    # --- TUNE THESE THRESHOLDS ---
-    MIN_POWER = 1000         # Minimum power for a valid tone (increase if needed)
-    DOMINANCE = 3.0         # Strongest must be this many times stronger than next
-    BAND_BALANCE = 0.5      # Low and high must be similar in power (ratio)
-    # -----------------------------
-
-    # Check minimum power
+    MIN_POWER = 1000
+    DOMINANCE = 3.0
+    BAND_BALANCE = 0.5
     if low_val < MIN_POWER or high_val < MIN_POWER:
         return None
-    # Check dominance
     if low_sorted[1] > (low_val / DOMINANCE):
         return None
     if high_sorted[1] > (high_val / DOMINANCE):
         return None
-    # Check band balance (avoid speech harmonics)
     ratio = min(low_val, high_val) / max(low_val, high_val)
     if ratio < BAND_BALANCE:
         return None
-
     return DTMF_MAP.get((low, high))
 
 def detect_ctcss_tone(audio_samples, sample_rate, ctcss_freq=CTCSS_FREQ, threshold=None, return_power=False):
@@ -734,40 +691,29 @@ def detect_ctcss_tone(audio_samples, sample_rate, ctcss_freq=CTCSS_FREQ, thresho
     if return_power:
         return power
     if threshold is None:
-        threshold = CTCSS_THRESHOLD if CTCSS_THRESHOLD is not None else 1000  # fallback
+        threshold = CTCSS_THRESHOLD if CTCSS_THRESHOLD is not None else 1000
     return power > threshold
 
 if __name__ == "__main__":
     sdr = None; audio_thread = None; input_thread = None
-    
     if vosk_model: print(f"Vosk model loaded: {VOSK_MODEL_PATH}")
     else: print("WARNING: Vosk model not loaded.")
-    
     print(f"Signal Reporter started: {time.ctime()}")
-
     try:
         print("Initializing SDR..."); sdr = RtlSdr()
-        sdr.center_freq = SDR_CENTER_FREQ 
+        sdr.center_freq = SDR_CENTER_FREQ
         sdr.sample_rate = SDR_SAMPLE_RATE; sdr.gain = SDR_GAIN
-
-        # Enable offset tuning to avoid DC spike at center frequency
         sdr.offset_tuning = SDR_OFFSET_TUNING
-
         print(f"SDR Configured: Freq={sdr.center_freq/1e6:.3f}MHz, Rate={sdr.sample_rate/1e6:.3f}Msps, Gain={sdr.get_gain()}dB, OffsetTuning={sdr.offset_tuning}")
-
         audio_thread = threading.Thread(target=audio_processing_thread_func, daemon=True); audio_thread.start()
         input_thread = threading.Thread(target=input_monitor_thread_func, daemon=True); input_thread.start()
-        
         print(f"Performing {BASELINE_DURATION_SECONDS}s RF baselining...")
         print(f"Listening on {SDR_CENTER_FREQ/1e6:.3f} MHz for '{TRIGGER_PHRASE_END}'...")
-        
         sdr.read_samples_async(sdr_callback, num_samples=SDR_NUM_SAMPLES_PER_CHUNK)
-        
         while True:
-            time.sleep(1) 
+            time.sleep(1)
             if audio_thread and not audio_thread.is_alive():
                 print("ERROR: Audio processing thread died. Exiting."); os._exit(1)
-
     except KeyboardInterrupt: print("\nCtrl+C. Shutting down...");
     except Exception as e: print(f"Main loop error: {e}"); import traceback; traceback.print_exc()
     finally:
