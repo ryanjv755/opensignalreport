@@ -1,6 +1,8 @@
 # OpenSignalReport
 
-**OpenSignalReport** is an easy-to-use, web-based tool for monitoring, logging, and analyzing radio signals using affordable SDR (Software Defined Radio) hardware. Designed with ham radio operators in mind, it helps you track signal reports, test coverage, and even play back your own transmissions—all from your web browser!
+**Set it, forget it, and hear your signal like never before!**  
+Introducing **OpenSignalReport**—the all-in-one, web-based solution for monitoring, logging, and analyzing your radio signals with affordable SDR (Software Defined Radio) hardware. Designed for hams who want more from their shack, OpenSignalReport lets you track signal reports, test coverage, and even play back your own transmissions—all from the comfort of your web browser.  
+**Just plug it in, turn it on, and let OpenSignalReport do the rest!**
 
 ---
 
@@ -72,7 +74,6 @@
 ## Hardware Setup: SDR to Radio (APRS/Audio Cable)
 
 To use OpenSignalReport with a radio, you need to connect your radio’s audio output to your computer’s audio input (or directly to the SDR if using direct sampling). For best results, use a proper audio interface or APRS-style cable.
-
 
 **If you use an RTL-SDR dongle, connect the antenna as usual. Audio is demodulated in software.**
 
@@ -218,4 +219,4 @@ MIT License
 
 ---
 
-**OpenSignalReport: See, hear, and log your signal—your way!**
+**OpenSignalReport: Set it, forget it, and hear your signal—your way!**
