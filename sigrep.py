@@ -18,34 +18,32 @@ import warnings
 import sqlite3
 import requests
 import xml.etree.ElementTree as ET
-warnings.filterwarnings("ignore", message="Starting a Matplotlib GUI outside of the main thread will likely fail.")
 import datetime
 from dotenv import load_dotenv
+
+warnings.filterwarnings("ignore", message="Starting a Matplotlib GUI outside of the main thread will likely fail.")
 load_dotenv()
 
+# --- Globals and Config ---
 baseline_noise_power = None
 baseline_ctcss_powers = []
-
 SetLogLevel(1)
 
-# --- USER CONFIGURABLE VARIABLES ---
-
 STATION_CALLSIGN = "KR4DTT"
-
 CONFIG_PATH = 'config.json'
 AUDIO_WAV_OUTPUT_DIR = "wavs"
 SAVE_SPECTROGRAM = True
 
-CTCSS_FREQ = 100.0  # Hz
-CTCSS_HOLDTIME = 0.7  # seconds
-MIN_TRANSMISSION_LENGTH = 0.5  # seconds
+CTCSS_FREQ = 100.0
+CTCSS_HOLDTIME = 0.7
+MIN_TRANSMISSION_LENGTH = 0.5
 
-SDR_CENTER_FREQ = 145570000  # Hz (or 145.570 MHz)
-SDR_SAMPLE_RATE = 1024000    # Hz
-SDR_GAIN = 0                 # dB
+SDR_CENTER_FREQ = 145570000
+SDR_SAMPLE_RATE = 1024000
+SDR_GAIN = 0
 SDR_OFFSET_TUNING = True
 
-NFM_FILTER_CUTOFF = 4000     # Hz
+NFM_FILTER_CUTOFF = 4000
 AUDIO_DOWNSAMPLE_RATE = 16000
 HPF_CUTOFF_HZ = 150
 HPF_ORDER = 4
@@ -56,8 +54,7 @@ BASELINE_DURATION_SECONDS = 10
 SDR_NUM_SAMPLES_PER_CHUNK = 16384
 
 TRIGGER_PHRASE_END = "signal report"
-S9_DBFS_REF = -62  # dBFS reference for S9
-
+S9_DBFS_REF = -62
 
 def load_config():
     with open(CONFIG_PATH, 'r') as f:
@@ -132,6 +129,7 @@ HPF_SOS = sig.butter(
     output='sos'
 )
 
+# --- Vosk Grammar Setup ---
 VOSK_VOCABULARY = []
 if STT_ENGINE == "vosk":
     VOSK_VOCABULARY.extend(list(NATO_PHONETIC_ALPHABET.keys()))
@@ -142,17 +140,23 @@ else:
 
 audio_iq_data_queue = queue.Queue()
 
+# --- Vosk Model Load ---
 vosk_model = None
 try:
     from vosk import Model, KaldiRecognizer
-    if os.path.exists(VOSK_MODEL_PATH): vosk_model = Model(VOSK_MODEL_PATH)
-    else: print(f"ERROR: Vosk model path not found: {VOSK_MODEL_PATH}")
-except ImportError: print("ERROR: Vosk library not installed.")
-except Exception as e: print(f"Error loading Vosk model: {e}")
+    if os.path.exists(VOSK_MODEL_PATH):
+        vosk_model = Model(VOSK_MODEL_PATH)
+    else:
+        print(f"ERROR: Vosk model path not found: {VOSK_MODEL_PATH}")
+except ImportError:
+    print("ERROR: Vosk library not installed.")
+except Exception as e:
+    print(f"Error loading Vosk model: {e}")
 
 from signal_db import log_signal_report, ensure_table_exists
 ensure_table_exists()
 
+# --- TTS and Transmission ---
 def speak_and_transmit(text_to_speak):
     current_os = platform.system().lower()
     cmd = []
@@ -225,13 +229,11 @@ def speak_and_transmit(text_to_speak):
         import traceback
         traceback.print_exc()
 
-    from scipy.io import wavfile
     rate, data = wavfile.read(tts_wav_path)
     if data.dtype != np.float32:
         data = data.astype(np.float32) / 32767.0
     data_with_tone = mix_ultrasonic_tone(data, rate)
     wavfile.write(tts_wav_path, rate, (data_with_tone * 32767).astype(np.int16))
-    import sys
     if "windows" in current_os:
         play_cmd = [
             "powershell",
@@ -250,6 +252,7 @@ def speak_and_transmit(text_to_speak):
         print("No supported audio playback method for this OS.")
     print(f"Transmitted: '{text_to_speak}'")
 
+# --- SDR Callback ---
 def sdr_callback(samples, sdr_instance):
     try:
         current_samples_shifted = samples
@@ -268,8 +271,10 @@ def sdr_callback(samples, sdr_instance):
         max_abs_val = np.max(np.abs(audio_resampled))
         audio_normalized = (audio_resampled / max_abs_val * 0.8) if max_abs_val > 1e-9 else audio_resampled
         audio_iq_data_queue.put((audio_normalized, chunk_rf_power, np.copy(current_samples_shifted)))
-    except Exception as e: print(f"Error in sdr_callback: {e}")
+    except Exception as e:
+        print(f"Error in sdr_callback: {e}")
 
+# --- Signal Metrics ---
 def estimate_s_meter(power_dbfs):
     if power_dbfs is None: return "Unknown"
     closest_s_unit = "S0"; s_map_sorted = sorted(S_METER_DBFS_MAP.items())
@@ -315,6 +320,7 @@ def calculate_signal_metrics(iq_samples_list):
         print(f"Error calculating signal metrics: {e}")
         return "Unknown", 0.0
 
+# --- Callsign and STT Processing ---
 def convert_nato_to_text(nato_words_from_stt):
     callsign_chars = []
     for word in nato_words_from_stt:
@@ -373,15 +379,16 @@ def write_status(state):
 
 write_status('initializing')
 
-ID_INTERVAL_SECONDS = 600  # 10 minutes
+ID_INTERVAL_SECONDS = 600
 last_id_time = time.time()
 
+# --- Main Audio Processing Thread ---
 def audio_processing_thread_func():
     global is_baselining_rf, baseline_rf_power_values
     global dtmf_last_digit, dtmf_last_time, dtmf_buffer
     global parrot_mode, parrot_recording, parrot_audio, parrot_waiting_for_next_transmission, parrot_ready_to_record
     global CTCSS_THRESHOLD
-    global last_id_time  # <-- Add this line
+    global last_id_time
 
     print("Audio processing thread started.")
     write_status('baselining')
@@ -425,7 +432,7 @@ def audio_processing_thread_func():
                     dtmf_last_digit = dtmf_digit
                     dtmf_last_time = now
 
-                # --- Read Current Time: #91 ---
+                # --- DTMF Command Handling ---
                 if dtmf_buffer.endswith("#91"):
                     now = datetime.datetime.now()
                     time_str = now.strftime("%I:%M %p").lstrip("0")
@@ -434,7 +441,6 @@ def audio_processing_thread_func():
                     dtmf_last_digit = None
                     dtmf_last_time = 0
 
-                # --- Read Current Date: #92 ---
                 if dtmf_buffer.endswith("#92"):
                     now = datetime.datetime.now()
                     date_str = now.strftime("%A, %B %d, %Y")
@@ -443,8 +449,6 @@ def audio_processing_thread_func():
                     dtmf_last_digit = None
                     dtmf_last_time = 0
 
-
-                # --- Weather Request: #93<zipcode> ---
                 match = re.search(r"#93(\d{5})", dtmf_buffer)
                 if match:
                     zip_code = match.group(1)
@@ -456,7 +460,6 @@ def audio_processing_thread_func():
                     dtmf_last_digit = None
                     dtmf_last_time = 0
 
-                # --- Read Last S-meter/SNR: #95 ---
                 if dtmf_buffer.endswith("#95"):
                     last_call = getattr(process_stt_result, 'last_call_info', None)
                     if last_call and last_call.get('callsign'):
@@ -470,7 +473,6 @@ def audio_processing_thread_func():
                     dtmf_last_digit = None
                     dtmf_last_time = 0
 
-                # --- Parrot Mode: #98 ---
                 if dtmf_buffer.endswith("#98"):
                     print("Parrot mode enabled by DTMF #98.")
                     parrot_mode = True
@@ -479,7 +481,6 @@ def audio_processing_thread_func():
                     dtmf_last_digit = None
                     dtmf_last_time = 0
 
-            # --- HF Band Conditions: #94 ---
             if dtmf_buffer.endswith("#94"):
                 print("HF band conditions requested by DTMF #94.")
                 band_report = get_hamqsl_hf_band_conditions()
@@ -488,8 +489,6 @@ def audio_processing_thread_func():
                 dtmf_last_digit = None
                 dtmf_last_time = 0
 
-
-            # --- Help Guide: #43 ---
             if dtmf_buffer.endswith("#43"):
                 print("Help requested by DTMF #43.")
                 help_text = (
@@ -507,7 +506,7 @@ def audio_processing_thread_func():
                 dtmf_last_digit = None
                 dtmf_last_time = 0
 
-
+            # --- Baselining ---
             if is_baselining_rf:
                 baseline_rf_power_values.append(chunk_rf_power)
                 baseline_ctcss_buffer = np.concatenate((baseline_ctcss_buffer, audio_chunk_normalized))
@@ -541,6 +540,7 @@ def audio_processing_thread_func():
                     last_ctcss_time = current_time
                     continue
 
+            # --- CTCSS Detection ---
             ctcss_buffer = np.concatenate((ctcss_buffer, audio_chunk_normalized))
             ctcss_detected = False
             if len(ctcss_buffer) >= 2048 and CTCSS_THRESHOLD is not None:
@@ -570,6 +570,7 @@ def audio_processing_thread_func():
                     print("CTCSS detected: starting capture.")
                     ctcss_active = True
 
+            # --- End of CTCSS, process segment ---
             if ctcss_active and (current_time - last_ctcss_time) > CTCSS_HOLDTIME:
                 buffer_duration = len(audio_buffer) / AUDIO_DOWNSAMPLE_RATE
                 print(f"CTCSS lost: processing segment ({buffer_duration:.2f}s audio).")
@@ -583,6 +584,7 @@ def audio_processing_thread_func():
                     audio_data_int16 = audio_data_int16.astype(np.int16)
                     wavfile.write(wav_path, AUDIO_DOWNSAMPLE_RATE, audio_data_int16)
 
+                    # --- Save Spectrogram ---
                     if SAVE_SPECTROGRAM:
                         spec_filename = wav_filename.replace('.wav', '.png')
                         spec_path = os.path.join(AUDIO_WAV_OUTPUT_DIR, spec_filename)
@@ -595,30 +597,30 @@ def audio_processing_thread_func():
                         plt.savefig(spec_path, bbox_inches='tight')
                         plt.close()
 
-        # --- SKIP STT IF PARROT MODE IS ACTIVE ---
-                if not parrot_mode:
-                    recognized_text_segment = ''
-                    if vosk_recognizer_instance:
-                        audio_bytes = audio_data_int16.tobytes()
-                        vosk_recognizer_instance.Reset()
-                        if vosk_recognizer_instance.AcceptWaveform(audio_bytes):
-                            result = json.loads(vosk_recognizer_instance.Result())
-                            recognized_text_segment = result.get('text', '')
+                    # --- Speech-to-Text (STT) Processing ---
+                    if not parrot_mode:
+                        recognized_text_segment = ''
+                        if vosk_recognizer_instance:
+                            audio_bytes = audio_data_int16.tobytes()
+                            vosk_recognizer_instance.Reset()
+                            if vosk_recognizer_instance.AcceptWaveform(audio_bytes):
+                                result = json.loads(vosk_recognizer_instance.Result())
+                                recognized_text_segment = result.get('text', '')
+                            else:
+                                final_result_json = json.loads(vosk_recognizer_instance.FinalResult())
+                                recognized_text_segment = final_result_json.get('text', '')
+                            print(f"STT recognized: '{recognized_text_segment}'")
                         else:
-                            final_result_json = json.loads(vosk_recognizer_instance.FinalResult())
-                            recognized_text_segment = final_result_json.get('text', '')
-                        print(f"STT recognized: '{recognized_text_segment}'")
-                    else:
-                        print("STT: Recognizer not available.")
+                            print("STT: Recognizer not available.")
 
-                    process_stt_result.last_audio_len = len(audio_buffer)
-                    process_stt_result(
-                        recognized_text_segment or '',
-                        list(iq_buffer),
-                        uid=capture_uid,
-                        audio_path=wav_path,
-                        spectrogram_path=spec_path if SAVE_SPECTROGRAM else None
-                    )
+                        process_stt_result.last_audio_len = len(audio_buffer)
+                        process_stt_result(
+                            recognized_text_segment or '',
+                            list(iq_buffer),
+                            uid=capture_uid,
+                            audio_path=wav_path,
+                            spectrogram_path=spec_path if SAVE_SPECTROGRAM else None
+                        )
 
                 audio_buffer = np.array([], dtype=np.float32)
                 iq_buffer.clear()
@@ -631,6 +633,7 @@ def audio_processing_thread_func():
             import traceback
             traceback.print_exc()
 
+        # --- Parrot Mode ---
         if parrot_mode and parrot_waiting_for_next_vad and not ctcss_active:
             print("Parrot mode enabled. Please transmit a phrase.")
             speak_and_transmit("Parrot mode enabled. Please transmit a phrase.")
@@ -674,6 +677,7 @@ def audio_processing_thread_func():
             parrot_waiting_for_next_vad = False
             parrot_ready_to_record = False
 
+# --- Input Monitor Thread ---
 def input_monitor_thread_func():
     print("Input monitor thread started. Type 'exit' to quit.")
     while True:
@@ -686,11 +690,13 @@ def input_monitor_thread_func():
         except EOFError: print("EOF on input, exiting."); os._exit(0)
         except Exception as e: print(f"Input monitor error: {e}, exiting."); os._exit(0)
 
+# --- Utility: Mix Ultrasonic Tone ---
 def mix_ultrasonic_tone(audio, sample_rate, tone_freq=18000, tone_level=0.01):
     t = np.arange(len(audio)) / sample_rate
     tone = tone_level * np.sin(2 * np.pi * tone_freq * t)
     return audio + tone
 
+# --- DTMF Detection ---
 DTMF_FREQS = {
     'low': [697, 770, 852, 941],
     'high': [1209, 1336, 1477, 1633]
@@ -711,7 +717,6 @@ parrot_recording = False
 parrot_audio = []
 parrot_waiting_for_next_vad = False
 parrot_ready_to_record = False
-
 
 def get_weather_for_zip(zip_code):
     api_key = os.environ.get("OPENWEATHER_API_KEY")
@@ -808,7 +813,7 @@ def get_hamqsl_hf_band_conditions():
         resp = requests.get(url, timeout=5)
         root = ET.fromstring(resp.content)
         bands = {}
-        # Find all <band> elements under <calculatedconditions>
+        spoken_lines = []
         for band_elem in root.findall(".//calculatedconditions/band"):
             name = band_elem.attrib.get("name")
             time = band_elem.attrib.get("time")
@@ -816,11 +821,9 @@ def get_hamqsl_hf_band_conditions():
             if name not in bands:
                 bands[name] = {}
             bands[name][time] = cond
-        # Build spoken lines
         for band in ["80m-40m", "30m-20m", "17m-15m", "12m-10m"]:
             day = bands.get(band, {}).get("day", "unknown")
             night = bands.get(band, {}).get("night", "unknown")
-            # Format for TTS
             band_spoken = band.replace("m-", " meter to ").replace("m", " meter")
             spoken_lines.append(f"{band_spoken} daytime {day.lower()} night time {night.lower()}")
         return ". ".join(spoken_lines)
@@ -828,6 +831,7 @@ def get_hamqsl_hf_band_conditions():
         print(f"Error fetching HF band conditions: {e}")
         return "Sorry, I could not retrieve HF band conditions."
 
+# --- Main Entrypoint ---
 if __name__ == "__main__":
     sdr = None; audio_thread = None; input_thread = None
     if vosk_model: print(f"Vosk model loaded: {VOSK_MODEL_PATH}")
