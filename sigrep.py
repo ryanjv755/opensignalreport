@@ -16,7 +16,12 @@ import uuid
 import matplotlib.pyplot as plt
 import warnings
 import sqlite3
+import requests
+import xml.etree.ElementTree as ET
 warnings.filterwarnings("ignore", message="Starting a Matplotlib GUI outside of the main thread will likely fail.")
+import datetime
+from dotenv import load_dotenv
+load_dotenv()
 
 baseline_noise_power = None
 baseline_ctcss_powers = []
@@ -24,6 +29,8 @@ baseline_ctcss_powers = []
 SetLogLevel(1)
 
 # --- USER CONFIGURABLE VARIABLES ---
+
+STATION_CALLSIGN = "KR4DTT"
 
 CONFIG_PATH = 'config.json'
 AUDIO_WAV_OUTPUT_DIR = "wavs"
@@ -366,11 +373,15 @@ def write_status(state):
 
 write_status('initializing')
 
+ID_INTERVAL_SECONDS = 600  # 10 minutes
+last_id_time = time.time()
+
 def audio_processing_thread_func():
     global is_baselining_rf, baseline_rf_power_values
     global dtmf_last_digit, dtmf_last_time, dtmf_buffer
     global parrot_mode, parrot_recording, parrot_audio, parrot_waiting_for_next_transmission, parrot_ready_to_record
     global CTCSS_THRESHOLD
+    global last_id_time  # <-- Add this line
 
     print("Audio processing thread started.")
     write_status('baselining')
@@ -397,6 +408,11 @@ def audio_processing_thread_func():
 
     while True:
         try:
+            # --- Automatic Station ID ---
+            if time.time() - last_id_time > ID_INTERVAL_SECONDS:
+                speak_and_transmit(f"This is {STATION_CALLSIGN} repeater.")
+                last_id_time = time.time()
+
             audio_chunk_normalized, chunk_rf_power, iq_data_for_chunk = audio_iq_data_queue.get(timeout=0.1)
             current_time = time.time()
 
@@ -409,24 +425,88 @@ def audio_processing_thread_func():
                     dtmf_last_digit = dtmf_digit
                     dtmf_last_time = now
 
-                    if dtmf_buffer.endswith("#98") and not parrot_mode:
-                        print("Parrot mode enabled by DTMF #98.")
-                        parrot_mode = True
-                        parrot_waiting_for_next_vad = True
-                        dtmf_buffer = ""
+                # --- Read Current Time: #91 ---
+                if dtmf_buffer.endswith("#91"):
+                    now = datetime.datetime.now()
+                    time_str = now.strftime("%I:%M %p").lstrip("0")
+                    speak_and_transmit(f"The current time is {time_str}.")
+                    dtmf_buffer = ""
+                    dtmf_last_digit = None
+                    dtmf_last_time = 0
 
+                # --- Read Current Date: #92 ---
+                if dtmf_buffer.endswith("#92"):
+                    now = datetime.datetime.now()
+                    date_str = now.strftime("%A, %B %d, %Y")
+                    speak_and_transmit(f"Today is {date_str}.")
+                    dtmf_buffer = ""
+                    dtmf_last_digit = None
+                    dtmf_last_time = 0
+
+
+                # --- Weather Request: #93<zipcode> ---
+                match = re.search(r"#93(\d{5})", dtmf_buffer)
+                if match:
+                    zip_code = match.group(1)
+                    print(f"Weather request triggered by DTMF #93{zip_code}.")
+                    speak_and_transmit("Weather request received. Please wait.")
+                    weather = get_weather_for_zip(zip_code)
+                    speak_and_transmit(weather)
+                    dtmf_buffer = ""
+                    dtmf_last_digit = None
+                    dtmf_last_time = 0
+
+                # --- Read Last S-meter/SNR: #95 ---
+                if dtmf_buffer.endswith("#95"):
+                    last_call = getattr(process_stt_result, 'last_call_info', None)
+                    if last_call and last_call.get('callsign'):
+                        s_meter = last_call.get('s_meter', 'Unknown')
+                        snr = last_call.get('snr', 0)
+                        callsign = last_call.get('callsign', 'Unknown')
+                        speak_and_transmit(f"Last signal was {callsign}, S meter {s_meter}, SNR {int(round(snr))} dB.")
+                    else:
+                        speak_and_transmit("No recent signal report available.")
+                    dtmf_buffer = ""
+                    dtmf_last_digit = None
+                    dtmf_last_time = 0
+
+                # --- Parrot Mode: #98 ---
+                if dtmf_buffer.endswith("#98"):
+                    print("Parrot mode enabled by DTMF #98.")
+                    parrot_mode = True
+                    parrot_waiting_for_next_vad = True
+                    dtmf_buffer = ""
+                    dtmf_last_digit = None
+                    dtmf_last_time = 0
+
+            # --- HF Band Conditions: #94 ---
+            if dtmf_buffer.endswith("#94"):
+                print("HF band conditions requested by DTMF #94.")
+                band_report = get_hamqsl_hf_band_conditions()
+                speak_and_transmit(band_report)
+                dtmf_buffer = ""
+                dtmf_last_digit = None
+                dtmf_last_time = 0
+
+
+            # --- Help Guide: #43 ---
             if dtmf_buffer.endswith("#43"):
-                print("Help mode triggered by DTMF #43.")
+                print("Help requested by DTMF #43.")
                 help_text = (
-                    "Open Signal Report Help. "
-                    "To get a signal report, transmit your callsign using the phonetic alphabet, "
-                    "followed by the words 'signal report'. For example: "
-                    "'Kilo Romeo Four Delta Tango Tango signal report'. "
-                    "To use parrot mode, send DTMF pound nine eight, then transmit your message. "
-                    "The system will play your transmission back to you. "
+                    "Available commands are: "
+                    "Pound Nine one for current time. "
+                    "Pound Nine two for current date. "
+                    "Pound Nine three followed by zip code for weather. "
+                    "Pound Nine four for HF band conditions. "
+                    "Pound Nine five for last signal report. "
+                    "Pound Nine eight for parrot mode. "
+                    "Pound Four three for this help message."
                 )
                 speak_and_transmit(help_text)
                 dtmf_buffer = ""
+                dtmf_last_digit = None
+                dtmf_last_time = 0
+
 
             if is_baselining_rf:
                 baseline_rf_power_values.append(chunk_rf_power)
@@ -478,8 +558,6 @@ def audio_processing_thread_func():
                     if not ctcss_active:
                         print("CTCSS detected: starting capture.")
                         ctcss_active = True
-            else:
-                ctcss_detected = False
 
             if ctcss_active or ctcss_detected or (current_time - last_ctcss_time) <= CTCSS_HOLDTIME:
                 audio_buffer = np.concatenate((audio_buffer, audio_chunk_normalized))
@@ -634,6 +712,36 @@ parrot_audio = []
 parrot_waiting_for_next_vad = False
 parrot_ready_to_record = False
 
+
+def get_weather_for_zip(zip_code):
+    api_key = os.environ.get("OPENWEATHER_API_KEY")
+    url = f"http://api.openweathermap.org/data/2.5/weather?zip={zip_code},us&appid={api_key}&units=imperial"
+    try:
+        resp = requests.get(url, timeout=5)
+        data = resp.json()
+        if "main" in data and "weather" in data and "name" in data:
+            temp = data["main"].get("temp")
+            desc = data["weather"][0].get("description", "").capitalize()
+            temp_min = data["main"].get("temp_min")
+            temp_max = data["main"].get("temp_max")
+            city = data.get("name", "your area")
+            humidity = data["main"].get("humidity")
+            wind = data.get("wind", {}).get("speed")
+            report = f"The current temperature in {city} is {int(round(temp))} degrees, {desc}."
+            if temp_max is not None and temp_min is not None:
+                report += f" The high is {int(round(temp_max))} and the low is {int(round(temp_min))} degrees."
+            if humidity is not None:
+                report += f" Humidity is {humidity} percent."
+            if wind is not None:
+                report += f" Wind speed is {int(round(wind))} miles per hour."
+            return report
+        elif "message" in data:
+            return f"Sorry, weather API error: {data['message']}"
+        else:
+            return "Sorry, I could not find the weather for that zip code."
+    except Exception as e:
+        return "Sorry, there was an error retrieving the weather."
+
 def detect_dtmf_digit(samples, sample_rate):
     def goertzel(samples, freq, sample_rate):
         N = len(samples)
@@ -693,6 +801,32 @@ def detect_ctcss_tone(audio_samples, sample_rate, ctcss_freq=CTCSS_FREQ, thresho
     if threshold is None:
         threshold = CTCSS_THRESHOLD if CTCSS_THRESHOLD is not None else 1000
     return power > threshold
+
+def get_hamqsl_hf_band_conditions():
+    url = "https://www.hamqsl.com/solarxml.php"
+    try:
+        resp = requests.get(url, timeout=5)
+        root = ET.fromstring(resp.content)
+        bands = {}
+        # Find all <band> elements under <calculatedconditions>
+        for band_elem in root.findall(".//calculatedconditions/band"):
+            name = band_elem.attrib.get("name")
+            time = band_elem.attrib.get("time")
+            cond = band_elem.text.strip()
+            if name not in bands:
+                bands[name] = {}
+            bands[name][time] = cond
+        # Build spoken lines
+        for band in ["80m-40m", "30m-20m", "17m-15m", "12m-10m"]:
+            day = bands.get(band, {}).get("day", "unknown")
+            night = bands.get(band, {}).get("night", "unknown")
+            # Format for TTS
+            band_spoken = band.replace("m-", " meter to ").replace("m", " meter")
+            spoken_lines.append(f"{band_spoken} daytime {day.lower()} night time {night.lower()}")
+        return ". ".join(spoken_lines)
+    except Exception as e:
+        print(f"Error fetching HF band conditions: {e}")
+        return "Sorry, I could not retrieve HF band conditions."
 
 if __name__ == "__main__":
     sdr = None; audio_thread = None; input_thread = None
