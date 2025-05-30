@@ -15,7 +15,6 @@ from scipy.io import wavfile
 import uuid
 import matplotlib.pyplot as plt
 import warnings
-import sqlite3
 import requests
 import xml.etree.ElementTree as ET
 import datetime
