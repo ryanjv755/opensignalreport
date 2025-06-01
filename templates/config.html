@@ -6,32 +6,119 @@
 <form method="post" style="max-width:500px;margin:20px 0 20px 0;padding:20px;border:1px solid var(--border,#ccc);border-radius:8px;background:var(--card,#f9f9f9);" onsubmit="showSpinner()">
   <fieldset style="margin-bottom:18px;padding:10px 15px;border-radius:6px;border:1px solid var(--border,#bbb);background:var(--table,#fff);">
     <legend style="font-weight:bold;color:var(--fg,#222);">SDR Settings</legend>
-    <label style="color:var(--fg,#222);">Center Frequency (MHz):<br><input name="SDR_CENTER_FREQ" type="number" value="{{ center_freq_display }}" step="0.001" style="width:100%"></label><br>
-    <label style="color:var(--fg,#222);">Sample Rate (Hz):<br><input name="SDR_SAMPLE_RATE" type="number" value="{{ cfg['SDR_SAMPLE_RATE'] }}" step="1" style="width:100%"></label><br>
-    <label style="color:var(--fg,#222);">Gain (dB):<br><input name="SDR_GAIN" type="number" value="{{ cfg['SDR_GAIN'] }}" step="1" style="width:100%"></label><br>
-    <label style="color:var(--fg,#222);">Offset Tuning: <input name="SDR_OFFSET_TUNING" type="checkbox" {{ checked_offset }}></label>
+    <label style="color:var(--fg,#222);">
+      Center Frequency (MHz):
+      <span class="ms-1" data-bs-toggle="tooltip" title="The center frequency for the SDR in MHz (e.g., 145.570 for 145.570 MHz)" style="cursor:help;">&#9432;</span><br>
+      <input name="SDR_CENTER_FREQ" type="number" value="{{ center_freq_display }}" step="0.001" style="width:100%">
+    </label><br>
+    <label style="color:var(--fg,#222);">
+      Sample Rate (Hz):
+      <span class="ms-1" data-bs-toggle="tooltip" title="SDR sample rate in samples per second (e.g., 1024000)" style="cursor:help;">&#9432;</span><br>
+      <input name="SDR_SAMPLE_RATE" type="number" value="{{ cfg['SDR_SAMPLE_RATE'] }}" step="1" style="width:100%">
+    </label><br>
+    <label style="color:var(--fg,#222);">
+      Gain (dB):
+      <span class="ms-1" data-bs-toggle="tooltip" title="SDR gain in dB. Set to 0 for automatic gain." style="cursor:help;">&#9432;</span><br>
+      <input name="SDR_GAIN" type="number" value="{{ cfg['SDR_GAIN'] }}" step="1" style="width:100%">
+    </label><br>
+    <label style="color:var(--fg,#222);">
+      Offset Tuning:
+      <span class="ms-1" data-bs-toggle="tooltip" title="Enable SDR offset tuning (recommended for some RTL-SDR devices)" style="cursor:help;">&#9432;</span>
+      <input name="SDR_OFFSET_TUNING" type="checkbox" {{ checked_offset }}>
+    </label>
   </fieldset>
   <fieldset style="margin-bottom:18px;padding:10px 15px;border-radius:6px;border:1px solid var(--border,#bbb);background:var(--table,#fff);">
-    <legend style="font-weight:bold;color:var(--fg,#222);">VAD & Audio Processing</legend>
-    <label style="color:var(--fg,#222);">Baseline Duration (s):<br><input name="BASELINE_DURATION_SECONDS" type="number" value="{{ cfg['BASELINE_DURATION_SECONDS'] }}" step="0.1" style="width:100%"></label><br>
-    <label style="color:var(--fg,#222);">RF VAD Std Multiplier:<br><input name="RF_VAD_STD_MULTIPLIER" type="number" value="{{ cfg['RF_VAD_STD_MULTIPLIER'] }}" step="0.01" style="width:100%"></label><br>
-    <label style="color:var(--fg,#222);">VAD Speech Capture (s):<br><input name="VAD_SPEECH_CAPTURE_SECONDS" type="number" value="{{ cfg['VAD_SPEECH_CAPTURE_SECONDS'] }}" step="0.1" style="width:100%"></label><br>
-    <label style="color:var(--fg,#222);">VAD Min Speech (s):<br><input name="VAD_MIN_SPEECH_SECONDS" type="number" value="{{ cfg['VAD_MIN_SPEECH_SECONDS'] }}" step="0.01" style="width:100%"></label><br>
-    <label style="color:var(--fg,#222);">Audio Downsample Rate (Hz):<br><input name="AUDIO_DOWNSAMPLE_RATE" type="number" value="{{ cfg['AUDIO_DOWNSAMPLE_RATE'] }}" step="1" style="width:100%"></label><br>
-    <label style="color:var(--fg,#222);">NFM Filter Cutoff (Hz):<br><input name="NFM_FILTER_CUTOFF" type="number" value="{{ cfg['NFM_FILTER_CUTOFF'] }}" step="1" style="width:100%"></label><br>
-    <label style="color:var(--fg,#222);">HPF Cutoff (Hz):<br><input name="HPF_CUTOFF_HZ" type="number" value="{{ cfg['HPF_CUTOFF_HZ'] }}" step="1" style="width:100%"></label><br>
-    <label style="color:var(--fg,#222);">HPF Order:<br><input name="HPF_ORDER" type="number" value="{{ cfg['HPF_ORDER'] }}" step="1" style="width:100%"></label><br>
+    <legend style="font-weight:bold;color:var(--fg,#222);">Audio Processing</legend>
+    <label style="color:var(--fg,#222);">
+      Baseline Duration (s):
+      <span class="ms-1" data-bs-toggle="tooltip" title="Seconds to measure baseline noise before starting signal detection." style="cursor:help;">&#9432;</span><br>
+      <input name="BASELINE_DURATION_SECONDS" type="number" value="{{ cfg['BASELINE_DURATION_SECONDS'] }}" step="0.1" style="width:100%">
+    </label><br>
+    <label style="color:var(--fg,#222);">
+      Audio Downsample Rate (Hz):
+      <span class="ms-1" data-bs-toggle="tooltip" title="Audio output sample rate in Hz (e.g., 16000)" style="cursor:help;">&#9432;</span><br>
+      <input name="AUDIO_DOWNSAMPLE_RATE" type="number" value="{{ cfg['AUDIO_DOWNSAMPLE_RATE'] }}" step="1" style="width:100%">
+    </label><br>
+    <label style="color:var(--fg,#222);">
+      NFM Filter Cutoff (Hz):
+      <span class="ms-1" data-bs-toggle="tooltip" title="Narrow FM filter cutoff frequency in Hz (e.g., 4000)" style="cursor:help;">&#9432;</span><br>
+      <input name="NFM_FILTER_CUTOFF" type="number" value="{{ cfg['NFM_FILTER_CUTOFF'] }}" step="1" style="width:100%">
+    </label><br>
+    <label style="color:var(--fg,#222);">
+      HPF Cutoff (Hz):
+      <span class="ms-1" data-bs-toggle="tooltip" title="High-pass filter cutoff frequency in Hz (e.g., 150)" style="cursor:help;">&#9432;</span><br>
+      <input name="HPF_CUTOFF_HZ" type="number" value="{{ cfg['HPF_CUTOFF_HZ'] }}" step="1" style="width:100%">
+    </label><br>
+    <label style="color:var(--fg,#222);">
+      HPF Order:
+      <span class="ms-1" data-bs-toggle="tooltip" title="Order of the high-pass filter (e.g., 4)" style="cursor:help;">&#9432;</span><br>
+      <input name="HPF_ORDER" type="number" value="{{ cfg['HPF_ORDER'] }}" step="1" style="width:100%">
+    </label><br>
+  </fieldset>
+  <fieldset style="margin-bottom:18px;padding:10px 15px;border-radius:6px;border:1px solid var(--border,#bbb);background:var(--table,#fff);">
+    <legend style="font-weight:bold;color:var(--fg,#222);">CTCSS & Transmission</legend>
+    <label style="color:var(--fg,#222);">
+      CTCSS Frequency (Hz):
+      <span class="ms-1" data-bs-toggle="tooltip" title="CTCSS tone frequency in Hz (e.g., 100.0)" style="cursor:help;">&#9432;</span><br>
+      <input name="CTCSS_FREQ" type="number" value="{{ cfg['CTCSS_FREQ'] }}" step="0.01" style="width:100%">
+    </label><br>
+    <label style="color:var(--fg,#222);">
+      CTCSS Threshold:
+      <span class="ms-1" data-bs-toggle="tooltip" title="CTCSS detection threshold (number or 'auto' for automatic detection)" style="cursor:help;">&#9432;</span><br>
+      <input name="CTCSS_THRESHOLD" type="text" value="{{ cfg['CTCSS_THRESHOLD'] }}" style="width:100%">
+    </label><br>
+    <label style="color:var(--fg,#222);">
+      CTCSS Hold Time (s):
+      <span class="ms-1" data-bs-toggle="tooltip" title="Seconds to wait after CTCSS loss before ending a capture." style="cursor:help;">&#9432;</span><br>
+      <input name="CTCSS_HOLDTIME" type="number" value="{{ cfg['CTCSS_HOLDTIME'] }}" step="0.01" style="width:100%">
+    </label><br>
+    <label style="color:var(--fg,#222);">
+      Min Transmission Length (s):
+      <span class="ms-1" data-bs-toggle="tooltip" title="Minimum length in seconds for a transmission to be saved." style="cursor:help;">&#9432;</span><br>
+      <input name="MIN_TRANSMISSION_LENGTH" type="number" value="{{ cfg['MIN_TRANSMISSION_LENGTH'] }}" step="0.01" style="width:100%">
+    </label><br>
   </fieldset>
   <fieldset style="margin-bottom:18px;padding:10px 15px;border-radius:6px;border:1px solid var(--border,#bbb);background:var(--table,#fff);">
     <legend style="font-weight:bold;color:var(--fg,#222);">Spectrogram & Web UI</legend>
-    <label style="color:var(--fg,#222);">Save Spectrogram: <input name="SAVE_SPECTROGRAM" type="checkbox" {{ checked_spec }}></label><br>
-    <label style="color:var(--fg,#222);">STT Engine:<br><input name="STT_ENGINE" type="text" value="{{ cfg['STT_ENGINE'] }}" style="width:100%"></label><br>
-    <label style="color:var(--fg,#222);">Vosk Model Path:<br><input name="VOSK_MODEL_PATH" type="text" value="{{ cfg['VOSK_MODEL_PATH'] }}" style="width:100%"></label><br>
-    <label style="color:var(--fg,#222);">Web Host:<br><input name="WEB_HOST" type="text" value="{{ cfg['WEB_HOST'] }}" style="width:100%"></label><br>
-    <label style="color:var(--fg,#222);">Web Port:<br><input name="WEB_PORT" type="number" value="{{ cfg['WEB_PORT'] }}" step="1" style="width:100%"></label><br>
+    <label style="color:var(--fg,#222);">
+      Save Spectrogram:
+      <span class="ms-1" data-bs-toggle="tooltip" title="Save a spectrogram image for each captured transmission." style="cursor:help;">&#9432;</span>
+      <input name="SAVE_SPECTROGRAM" type="checkbox" {{ checked_spec }}>
+    </label><br>
+    <label style="color:var(--fg,#222);">
+      STT Engine:
+      <span class="ms-1" data-bs-toggle="tooltip" title="Speech-to-text engine to use (e.g., vosk)" style="cursor:help;">&#9432;</span><br>
+      <input name="STT_ENGINE" type="text" value="{{ cfg['STT_ENGINE'] }}" style="width:100%">
+    </label><br>
+    <label style="color:var(--fg,#222);">
+      Vosk Model Path:
+      <span class="ms-1" data-bs-toggle="tooltip" title="Path to the Vosk speech recognition model directory." style="cursor:help;">&#9432;</span><br>
+      <input name="VOSK_MODEL_PATH" type="text" value="{{ cfg['VOSK_MODEL_PATH'] }}" style="width:100%">
+    </label><br>
+    <label style="color:var(--fg,#222);">
+      Web Host:
+      <span class="ms-1" data-bs-toggle="tooltip" title="Host address for the web dashboard (e.g., 0.0.0.0)" style="cursor:help;">&#9432;</span><br>
+      <input name="WEB_HOST" type="text" value="{{ cfg['WEB_HOST'] }}" style="width:100%">
+    </label><br>
+    <label style="color:var(--fg,#222);">
+      Web Port:
+      <span class="ms-1" data-bs-toggle="tooltip" title="Port for the web dashboard (e.g., 5000)" style="cursor:help;">&#9432;</span><br>
+      <input name="WEB_PORT" type="number" value="{{ cfg['WEB_PORT'] }}" step="1" style="width:100%">
+    </label><br>
   </fieldset>
   <div style="margin-top:20px;">
     <input type="submit" value="Save">
   </div>
 </form>
+{% endblock %}
+
+{% block head %}
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+  tooltipTriggerList.forEach(function (tooltipTriggerEl) {
+    new bootstrap.Tooltip(tooltipTriggerEl);
+  });
+});
+</script>
 {% endblock %}

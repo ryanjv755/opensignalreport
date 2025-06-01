@@ -46,4 +46,14 @@ document.getElementById('spectrogram-modal').onclick = function(e) {
   if (e.target === this) hideSpectrogramModal();
 };
 </script>
+
+<div class="pagination" style="margin-top:24px;">
+  {% if page > 1 %}
+    <a href="{{ url_for('logs', page=page-1) }}">&laquo; Prev</a>
+  {% endif %}
+  Page {{ page }} of {{ total_pages }}
+  {% if page < total_pages %}
+    <a href="{{ url_for('logs', page=page+1) }}">Next &raquo;</a>
+  {% endif %}
+</div>
 {% endblock %}

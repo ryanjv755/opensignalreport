@@ -86,10 +86,13 @@ def index():
 
 # Add a navigation bar to all pages
 NAVBAR = '''
-<div style="background:var(--card,#fff);padding:12px 0 12px 0;margin-bottom:24px;border-bottom:1px solid var(--border,#ccc);">
-  <a href="/run" style="margin:0 18px;font-weight:bold;text-decoration:none;color:#0078d7;">Run</a>
-  <a href="/config" style="margin:0 18px;font-weight:bold;text-decoration:none;color:#0078d7;">Configuration</a>
-  <a href="/logs" style="margin:0 18px;font-weight:bold;text-decoration:none;color:#0078d7;">Logs</a>
+<div class="navbar">
+  <div class="nav-links">
+    <a href="/run">Run</a>
+    <a href="/config">Configuration</a>
+    <a href="/logs">Logs</a>
+  </div>
+  <button id="theme-toggle" class="theme-toggle" onclick="toggleTheme()">Toggle Dark Mode</button>
 </div>
 '''
 
@@ -168,7 +171,6 @@ document.addEventListener('DOMContentLoaded', function() {
   setTheme(dark);
 });
 </script>
-<button id="theme-toggle" class="theme-toggle" onclick="toggleTheme()">Toggle Dark Mode</button>
 '''
 
 @app.route('/run', methods=['GET', 'POST'])
@@ -291,23 +293,15 @@ def config():
             hpf_order = int(request.form['HPF_ORDER'])
             if not (1 <= hpf_order <= 10):
                 raise ValueError('HPF Order must be between 1 and 10.')
-            web_port = int(request.form['WEB_PORT'])
-            if not (1 <= web_port <= 65535):
-                raise ValueError('Web port must be between 1 and 65535.')
-            web_host = request.form['WEB_HOST']
-            if not re.match(r'^[\w\.-]+$', web_host):
-                raise ValueError('Web host contains invalid characters.')
-            stt_engine = request.form['STT_ENGINE']
-            if not stt_engine or len(stt_engine) > 64:
-                raise ValueError('STT Engine must be non-empty and less than 64 characters.')
-            vosk_path = request.form['VOSK_MODEL_PATH']
-            if not vosk_path or len(vosk_path) > 256:
-                raise ValueError('Vosk Model Path must be non-empty and less than 256 characters.')
             ctcss_freq = float(request.form['CTCSS_FREQ'])
             ctcss_threshold = request.form['CTCSS_THRESHOLD']
             ctcss_holdtime = float(request.form['CTCSS_HOLDTIME'])
             min_trans_len = float(request.form['MIN_TRANSMISSION_LENGTH'])
             save_spec = request.form.get('SAVE_SPECTROGRAM') == 'on'
+            stt_engine = request.form['STT_ENGINE']
+            vosk_path = request.form['VOSK_MODEL_PATH']
+            web_port = int(request.form['WEB_PORT'])
+            web_host = request.form['WEB_HOST']
             # Save validated values
             cfg['SDR_CENTER_FREQ'] = center_freq
             cfg['SDR_SAMPLE_RATE'] = sample_rate
@@ -318,15 +312,15 @@ def config():
             cfg['NFM_FILTER_CUTOFF'] = nfm_cutoff
             cfg['HPF_CUTOFF_HZ'] = hpf_cutoff
             cfg['HPF_ORDER'] = hpf_order
+            cfg['CTCSS_FREQ'] = ctcss_freq
+            cfg['CTCSS_THRESHOLD'] = ctcss_threshold
+            cfg['CTCSS_HOLDTIME'] = ctcss_holdtime
+            cfg['MIN_TRANSMISSION_LENGTH'] = min_trans_len
             cfg['SAVE_SPECTROGRAM'] = save_spec
             cfg['STT_ENGINE'] = stt_engine
             cfg['VOSK_MODEL_PATH'] = vosk_path
             cfg['WEB_PORT'] = web_port
             cfg['WEB_HOST'] = web_host
-            cfg['CTCSS_FREQ'] = ctcss_freq
-            cfg['CTCSS_THRESHOLD'] = ctcss_threshold
-            cfg['CTCSS_HOLDTIME'] = ctcss_holdtime
-            cfg['MIN_TRANSMISSION_LENGTH'] = min_trans_len
             save_config(cfg)
             return redirect(url_for('config'))
         except Exception as e:
@@ -340,64 +334,33 @@ def config():
         center_freq_display = f"{center_freq_val / 1e6:.3f}"
     else:
         center_freq_display = str(center_freq_val)
-    html = NAVBAR + GLOBAL_STYLE + f'''
-    <div class="main-container">
-    <h1>Configuration</h1>
-    <div id="spinner" class="spinner"></div>
-    {'<div class="msg" style="color:red;">'+error+'</div>' if error else ''}
-    <form method="post" style="max-width:500px;margin:20px 0 20px 0;padding:20px;border:1px solid var(--border,#ccc);border-radius:8px;background:var(--card,#f9f9f9);" onsubmit="showSpinner()">
-      <fieldset style="margin-bottom:18px;padding:10px 15px;border-radius:6px;border:1px solid var(--border,#bbb);background:var(--table,#fff);">
-        <legend style="font-weight:bold;color:var(--fg,#222);">SDR Settings</legend>
-        <label style="color:var(--fg,#222);">Center Frequency (MHz):<br><input name="SDR_CENTER_FREQ" type="number" value="{center_freq_display}" step="0.001" style="width:100%"></label><br>
-        <label style="color:var(--fg,#222);">Sample Rate (Hz):<br><input name="SDR_SAMPLE_RATE" type="number" value="{cfg['SDR_SAMPLE_RATE']}" step="1" style="width:100%"></label><br>
-        <label style="color:var(--fg,#222);">Gain (dB):<br><input name="SDR_GAIN" type="number" value="{cfg['SDR_GAIN']}" step="0.1" style="width:100%"></label><br>
-        <label style="color:var(--fg,#222);">Offset Tuning: <input name="SDR_OFFSET_TUNING" type="checkbox" {checked_offset}></label>
-      </fieldset>
-      <fieldset style="margin-bottom:18px;padding:10px 15px;border-radius:6px;border:1px solid var(--border,#bbb);background:var(--table,#fff);">
-        <legend style="font-weight:bold;color:var(--fg,#222);">Audio Processing</legend>
-        <label style="color:var(--fg,#222);">Baseline Duration (s):<br><input name="BASELINE_DURATION_SECONDS" type="number" value="{cfg['BASELINE_DURATION_SECONDS']}" step="0.1" style="width:100%"></label><br>
-        <label style="color:var(--fg,#222);">Audio Downsample Rate (Hz):<br><input name="AUDIO_DOWNSAMPLE_RATE" type="number" value="{cfg['AUDIO_DOWNSAMPLE_RATE']}" step="1" style="width:100%"></label><br>
-        <label style="color:var(--fg,#222);">NFM Filter Cutoff (Hz):<br><input name="NFM_FILTER_CUTOFF" type="number" value="{cfg['NFM_FILTER_CUTOFF']}" step="1" style="width:100%"></label><br>
-        <label style="color:var(--fg,#222);">HPF Cutoff (Hz):<br><input name="HPF_CUTOFF_HZ" type="number" value="{cfg['HPF_CUTOFF_HZ']}" step="1" style="width:100%"></label><br>
-        <label style="color:var(--fg,#222);">HPF Order:<br><input name="HPF_ORDER" type="number" value="{cfg['HPF_ORDER']}" step="1" style="width:100%"></label><br>
-      </fieldset>
-      <fieldset style="margin-bottom:18px;padding:10px 15px;border-radius:6px;border:1px solid var(--border,#bbb);background:var(--table,#fff);">
-        <legend style="font-weight:bold;color:var(--fg,#222);">CTCSS & Web UI</legend>
-        <label style="color:var(--fg,#222);">CTCSS Frequency (Hz):<br><input name="CTCSS_FREQ" type="number" value="{cfg['CTCSS_FREQ']}" step="0.01" style="width:100%"></label><br>
-        <label style="color:var(--fg,#222);">CTCSS Threshold:<br><input name="CTCSS_THRESHOLD" type="text" value="{cfg['CTCSS_THRESHOLD']}" style="width:100%"></label><br>
-        <label style="color:var(--fg,#222);">CTCSS Hold Time (s):<br><input name="CTCSS_HOLDTIME" type="number" value="{cfg['CTCSS_HOLDTIME']}" step="0.01" style="width:100%"></label><br>
-        <label style="color:var(--fg,#222);">Min Transmission Length (s):<br><input name="MIN_TRANSMISSION_LENGTH" type="number" value="{cfg['MIN_TRANSMISSION_LENGTH']}" step="0.01" style="width:100%"></label><br>
-        <label style="color:var(--fg,#222);">Save Spectrogram: <input name="SAVE_SPECTROGRAM" type="checkbox" {checked_spec}></label><br>
-        <label style="color:var(--fg,#222);">STT Engine:<br><input name="STT_ENGINE" type="text" value="{cfg['STT_ENGINE']}" style="width:100%"></label><br>
-        <label style="color:var(--fg,#222);">Vosk Model Path:<br><input name="VOSK_MODEL_PATH" type="text" value="{cfg['VOSK_MODEL_PATH']}" style="width:100%"></label><br>
-        <label style="color:var(--fg,#222);">Web Host:<br><input name="WEB_HOST" type="text" value="{cfg['WEB_HOST']}" style="width:100%"></label><br>
-        <label style="color:var(--fg,#222);">Web Port:<br><input name="WEB_PORT" type="number" value="{cfg['WEB_PORT']}" step="1" style="width:100%"></label><br>
-      </fieldset>
-      <div style="margin-top:20px;">
-        <input type="submit" value="Save">
-      </div>
-    </form>
-    </div>
-    '''
-    return html
+    return render_template(
+        'config.html',
+        navbar=NAVBAR,
+        title='Configuration',
+        cfg=cfg,
+        checked_offset=checked_offset,
+        checked_spec=checked_spec,
+        center_freq_display=center_freq_display,
+        error=error
+    )
 
 @app.route('/logs')
 def logs():
-    reports = get_all_signal_reports()
-    # Show all reports, including those with 'Unknown' callsign
-    report_rows = []
-    for r in reports:
-        uid = r[0]
-        callsign = r[1] if len(r) > 1 else ''
-        # Optionally, highlight or mark 'Unknown' callsigns in the UI
-        wav_files = glob.glob(f'wavs/vad_capture_*_{uid}*.wav')
-        wav_url = f'/wavs/{os.path.basename(wav_files[0])}' if wav_files else ''
-        png_files = glob.glob(f'wavs/vad_capture_*_{uid}*.png')
-        png_url = f'/spectrogram/{os.path.basename(png_files[0])}' if png_files else ''
-        png_thumb = f'/wavs/{os.path.basename(png_files[0])}' if png_files else ''
-        report_rows.append(list(r) + [wav_url, png_url, png_thumb])
-    # No filtering: all entries, including 'Unknown', are shown
-    return render_template('logs.html', navbar=NAVBAR, title='Logs', reports=report_rows)
+    page = int(request.args.get('page', 1))
+    per_page = 20  # or any number you prefer
+    all_reports = get_all_signal_reports()
+    total = len(all_reports)
+    start = (page - 1) * per_page
+    end = start + per_page
+    reports = all_reports[start:end]
+    total_pages = (total + per_page - 1) // per_page
+    return render_template(
+        'logs.html',
+        reports=reports,
+        page=page,
+        total_pages=total_pages
+    )
 
 @app.route('/spectrogram/<filename>')
 def spectrogram_page(filename):
